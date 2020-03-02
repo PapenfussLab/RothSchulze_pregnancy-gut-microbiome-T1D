@@ -1,8 +1,8 @@
 # RothSchulze_pregnancy-microbiome-T1D
 
-### The R Markdowns and R objets found here can be used to reproduce the analysis performed in the article titled "Distinct changes in the composition and function of the gut microbiome accompany type 1 diabetes in pregnancy"
+The R Markdowns and R objets found here can be used to reproduce the analysis performed in the article titled "Distinct changes in the composition and function of the gut microbiome accompany type 1 diabetes in pregnancy"
 
-####***Details on content of each file used to perform analysis of the whole metagenomics sequencing data:***
+### *Details on content of each file used to perform analysis of the whole metagenomics sequencing data:*
 
 **Analysis_metagenomics_dataset_upload.Rmd:** R markdown script with all the code used to analyse the taxonomy and functional metagenomics data.
 
@@ -27,7 +27,7 @@
 **Mothers_Metagenomics_Functions_MetaCyc.RData:** Contains the input for the markdown *Analysis_metagenomics_dataset_upload.Rmd* in which functional analyses where performed for MetaCyc reactions.
 
 
-####***Details on content of each file used to perform analysis of the 16S rRNA amplicon sequencing data:***
+### *Details on content of each file used to perform analysis of the 16S rRNA amplicon sequencing data:*
 
 **Phyloseq_Mother_data_formating_16S.R:** R script used to make OTUs from features (16S rRNA data) and filter data by abundance.
 
