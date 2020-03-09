@@ -1,4 +1,4 @@
-# RothSchulze_pregnancy-microbiome-T1D
+# RothSchulze_pregnancy-gut-microbiome-T1D
 
 The R Markdowns and R objets found here can be used to reproduce the analysis performed in the article titled "Distinct changes in the composition and function of the gut microbiome accompany type 1 diabetes in pregnancy"
 
@@ -8,7 +8,7 @@ The R Markdowns and R objets found here can be used to reproduce the analysis pe
 
 **Analysis_metagenomics_dataset_uploadG.html:** Knitted html document corresponding to Analysis_metagenomics_dataset_upload.Rmd with the complete analysis of the metagenomic taxonomic and functional data. 
 
-*To view this file copy the address, go to https://htmlpreview.github.io/ paste and click enter.*
+*To view this file copy the complete address (https://github.com/PapenfussLab/RothSchulze_pregnancy-gut-microbiome-T1D/blob/master/Analysis_metagenomics_dataset_uploadG.html), go to https://htmlpreview.github.io/ paste and click enter.*
 
 **Mothers_Metagenomics_Strain.RData:** Contains the input for the markdown *Analysis_metagenomics_dataset_upload.Rmd* in which taxonomic analyses where performed at the strain taxonomic level.
 
@@ -37,7 +37,7 @@ The R Markdowns and R objets found here can be used to reproduce the analysis pe
 
 **Analysis_16S_dataset_uploadG.html:** Knitted html document corresponding to Analysis_16S_dataset_upload.Rmd with the complete analysis of the 16S rRNA amplicon data.
 
-*To view this file copy the address, go to https://htmlpreview.github.io/ paste and click enter.*
+*To view this file copy the complete address (https://github.com/PapenfussLab/RothSchulze_pregnancy-gut-microbiome-T1D/blob/master/Analysis_16S_dataset_uploadG.html, go to https://htmlpreview.github.io/ paste and click enter.*
 
 **Mothers_OTU_AFilt1_Preg.RData:** Contains the input for the R script *Phyloseq_Mother_data_formating_16S.R:* in which I convert features into OTUs for the 16S data.
 
