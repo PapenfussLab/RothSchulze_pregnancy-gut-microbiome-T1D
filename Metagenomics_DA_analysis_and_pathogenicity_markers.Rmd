@@ -1,0 +1,2985 @@
+---
+title: "Analysis of the gut microbiome during pregnancy in T1D (Differential abundance and pathogenicity markers analyses)"
+author: "Alexandra Roth Schulze"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+  html_notebook:
+    code_folding: hide
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+editor_options:
+  chunk_output_type: console
+urlcolor: blue
+---
+
+
+```{r D8, echo=FALSE}
+options(width = 90)
+pn=0
+tn=0
+RDA <- data.frame(Trimester=as.character(), Taxa=as.character(), TaxLevel=as.character(), LogFC=as.numeric(), P.Val=as.numeric(), adj.P.Val=as.numeric(),NT1DPrev=as.numeric(), T1DPrev=as.numeric(), MT1.no=as.numeric(), MT1.yes=as.numeric(), MT2.no=as.numeric(), MT2.yes=as.numeric(), MT3.no=as.numeric(), MT3.yes=as.numeric(), SET1.no=as.numeric(), SET1.yes=as.numeric(), SET2.no=as.numeric(), SET2.yes=as.numeric(), SET3.no=as.numeric(), SET3.yes=as.numeric(), stringsAsFactors=FALSE)
+
+QDA <- data.frame(Trimester=as.character(), Taxa=as.character(), TaxLevel=as.character(), LogFC=as.numeric(), P.Val=as.numeric(), adj.P.Val=as.numeric(),TPrev=as.numeric(), TSPrev=as.numeric(), MT1.no=as.numeric(), MT1.yes=as.numeric(), MT2.no=as.numeric(), MT2.yes=as.numeric(), MT3.no=as.numeric(), MT3.yes=as.numeric(), SET1.no=as.numeric(), SET1.yes=as.numeric(), SET2.no=as.numeric(), SET2.yes=as.numeric(), SET3.no=as.numeric(), SET3.yes=as.numeric(), stringsAsFactors=FALSE)
+
+RDAF <- data.frame(Trimester=as.character(), Taxa=as.character(), stringsAsFactors=FALSE)
+QDAF <- data.frame(Trimester=as.character(), Taxa=as.character(), stringsAsFactors=FALSE)
+TableCom2 <- data.frame()
+```
+
+```{r D2, include=FALSE}
+library(knitr)
+opts_chunk$set(comment = NA, warning=FALSE, message=FALSE, echo=TRUE, tidy=TRUE, tidy.opts=list(width.cutoff=60))
+library("ggplot2")
+theme_set(theme_bw())
+pal = "Set1"
+scale_colour_discrete <- function(palname = pal, ...) {
+    scale_colour_brewer(palette = palname, ...)
+}
+scale_fill_discrete <- function(palname = pal, ...) {
+    scale_fill_brewer(palette = palname, ...)
+}
+```
+
+
+```{r PackageLoad, tidy=TRUE, message=FALSE, warning=FALSE, echo=FALSE}
+library("data.table")
+library("dplyr")
+library("ggplot2")
+library("ade4")
+library("plotly")
+library("RColorBrewer")
+library("matrixStats")
+library("knitr")
+library("RColorBrewer")
+library("limma")
+library("edgeR")
+library("phyloseq")
+library("vegan")
+library("reshape2")
+library("scales")
+library("lme4")
+library("lmerTest")
+library("geepack")
+library("Hmisc")
+library("emmeans")
+library("doBy")
+library("microbiomeSeq")
+library("devtools")
+library("adespatial")
+library("genefilter")
+library("metagMisc")
+library("easyGgplot2")
+library("ggpubr")
+library("kableExtra")
+#library("plyr")
+source(file="~/Documents/ENDIA Project/Data and analyses/voomLmFit.R")
+```
+
+```{r RMAPfunction, echo=FALSE}
+## Function to perform PERMANOVA analysis with repeat measure-aware permutations 
+PERMANOVA_repeat_measures <- function(
+  D, permute_within, blocks = NULL, block_data, permutations=999,
+  metadata_order = c(names(permute_within), names(block_data)),
+  na.rm=F) {
+  
+  # Make sure D is a dist object
+  if (class(D) != "dist") {
+    stop("D must be a dist object")
+  }
+  
+  # Default to free permutations if blocks is not given
+  if (!missing(block_data) && is.null(blocks)) {
+    stop("blocks must be given if block_data is present")
+  } else if (is.null(blocks)) {
+    blocks <- rep(1, nrow(permute_within))
+    block_data <- as.data.frame(matrix(0, nrow=1, ncol=0))
+  } else if (length(unique(blocks)) == 1) {
+    warning("blocks only contains one unique value")
+  }
+  
+  # Ensure no metadata overlap between permute_within and block_data
+  if (length(intersect(names(permute_within), names(block_data))) > 0) {
+    stop("metadata is repeated across permute_within and block_data")
+  }
+  
+  # Ensure that metadata_order only contains stuff in permute_within and block_data
+  if(length(setdiff(metadata_order, union(names(permute_within), names(block_data)))) > 0) {
+    stop("metadata_order contains metadata not in permute_within and block_data")
+  }
+  
+  # Ensure that the data in permute_within matches that in dist
+  ord <- rownames(as.matrix(D))
+  if (length(ord) != nrow(permute_within) || length(blocks) != length(ord)) {
+    stop("blocks, permute_within, and D are not the same size")
+  }
+  if (is.null(rownames(permute_within))) {
+    warning("permute_within has no rownames - can't verify sample orders")
+  } else if (!all(ord == rownames(permute_within))) {
+    stop("rownames do not match between permute_within and D")
+  }
+  
+  # Ensure matching between blocks and block_data
+  if (any(is.na(blocks))) {
+    stop("NAs are not allowed in blocks")
+  }
+  if (is.factor(blocks)) {
+    if (length(levels(blocks)) != nrow(block_data)) {
+      stop("block_data does not have as many rows as blocks has levels")
+    }
+    if (!is.null(rownames(block_data)) && any(rownames(block_data) != levels(blocks))) {
+      stop("block_data rownames does not match the levels of blocks")
+    }
+    # Discard level information
+    blocks <- as.numeric(blocks)
+  } else if (is.numeric(blocks)) {
+    if (blocks < 1 || max(blocks) > nrow(block_data)) {
+      stop("Numeric blocks has indices out of range")
+    }
+  } else if (is.character(blocks)) {
+    if (is.null(rownames(block_data)) || !all(blocks %in% rownames(block_data))) {
+      stop("blocks does not match the rownames of block_data")
+    }
+    # Transform to numeric
+    blocks <- match(blocks, rownames(block_data))
+  } else {
+    stop("blocks must be a numeric, factor, or character vector")
+  }
+  
+  # Error out on NA metadata rather than allowing adonis to error out with
+  # a totally nonsensical error message
+  if (any(is.na(permute_within)) || any(is.na(block_data))) {
+    if (na.rm) {
+      n_prerm <- length(blocks)
+      
+      # Remove NAs in block_data
+      hasna <- (rowSums(is.na(block_data)) > 0) | (sapply(split(rowSums(is.na(permute_within)) > 0, blocks), mean) == 1)
+      block_data <- block_data[!hasna,, drop=F]
+      keep <- !hasna[blocks]
+      blocks <- cumsum(!hasna)[blocks]
+      
+      blocks <- blocks[keep]
+      permute_within <- permute_within[keep,, drop=F]
+      D <- as.matrix(D)[keep, keep]
+      # block_data is not subset, as the rows with NAs are no longer referenced in blocks
+      
+      # Remove NAs in permute_within
+      keep <- rowSums(is.na(permute_within)) == 0
+      blocks <- blocks[keep]
+      permute_within <- permute_within[keep,, drop=F]
+      D <- as.dist(D[keep, keep])
+      
+      if (length(blocks) < ncol(permute_within) + ncol(block_data)) {
+        stop(sprintf("After omitting samples with NAs, the number of samples (%d) is less than the number of metadata (%d)",
+                     length(blocks), ncol(permute_within) + ncol(block_data)))
+      } else if (length(blocks) < n_prerm * 0.5) {
+        warning(sprintf("Removed %d samples with NA metadata", n_prerm - length(blocks)))
+      }
+    } else {
+      stop("Some metadata is NA! adonis does not support any NA in the metadata")
+    }
+  }
+  
+  # Warn on some suspicious input
+  persample <- apply(permute_within, 1, function(x)is.factor(x) && !any(duplicated(x)))
+  if (any(persample)) {
+    warning(sprintf("%s in permute_within has one DOF per sample.", colnames(permute_within)[which(persample)[1]]))
+  }
+  if (length(unique(blocks)) < nrow(block_data)) {
+    warning("Not all blocks have a sample associated with them. Block permutations will still be performed over the full set of blocks - if this is not desired, subset block_data to only the blocks which appear in the data.")
+  }
+  if (!any(duplicated(blocks))) {
+    warning("blocks contains no duplicated elements")
+  }
+  
+  library(vegan)
+  library(permute)
+  
+  # Test statistic from non-permuted data
+  mtdat <- cbind(permute_within, block_data[blocks,,drop=F])
+  ad <- adonis(D ~ ., permutations=0, data=mtdat[, metadata_order, drop=F])
+  R2 <- ad$aov.tab$R2
+  names(R2) <- rownames(ad$aov.tab)
+  
+  # Permutations
+  nullsamples <- matrix(NA, nrow=length(R2), ncol=permutations)
+  for (i in seq_len(permutations)) {
+    within.i <- shuffle(nrow(permute_within), control=how(blocks=blocks))
+    block.i <- sample(seq_len(nrow(block_data)))
+    mtdat <- cbind(
+      permute_within[within.i,,drop=F],
+      block_data[block.i,,drop=F][blocks,,drop=F])
+    perm.ad <- adonis(D ~ ., permutations=0, data=mtdat[, metadata_order, drop=F])
+    
+    nullsamples[,i] <- perm.ad$aov.tab$R2
+  }
+  
+  # For residuals, test the other direction (i.e. p-value of all covariates)
+  n <- length(R2)
+  R2[n-1] <- 1 - R2[n-1]
+  nullsamples[n-1,] <- 1 - nullsamples[n-1,]
+  
+  # P value calculation similar to adonis's
+  exceedances <- rowSums(nullsamples > R2)
+  P <- (exceedances + 1) / (permutations + 1)
+  
+  P[n] <- NA    # No p-values for "Total"
+  ad$aov.tab$`Pr(>F)` <- P
+  
+  return (ad)
+}
+
+##Filter abundance
+# function to perform pre-filtering
+low.count.removal = function(data, percent=0.01)
+{
+  keep.otu = which(colSums(data)*100/(sum(colSums(data))) > percent)
+  data.filter = data[,keep.otu]
+  return(list(data.filter = data.filter, keep.otu = keep.otu))
+}
+```
+
+```{r StdErrorPlotfunction, echo=FALSE}
+#For plotting abundances of Taxa across time for T1D and nonT1D
+
+## Gives count, mean, standard deviation, standard error of the mean, and confidence interval (default 95%).
+##   data: a data frame.
+##   measurevar: the name of a column that contains the variable to be summariezed
+##   groupvars: a vector containing names of columns that contain grouping variables
+##   na.rm: a boolean that indicates whether to ignore NA's
+##   conf.interval: the percent range of the confidence interval (default is 95%)
+summarySE <- function(data=NULL, measurevar, groupvars=NULL, na.rm=FALSE,
+                      conf.interval=.95, .drop=TRUE) {
+    library(plyr)
+
+    # New version of length which can handle NA's: if na.rm==T, don't count them
+    length2 <- function (x, na.rm=FALSE) {
+        if (na.rm) sum(!is.na(x))
+        else       length(x)
+    }
+
+    # This does the summary. For each group's data frame, return a vector with
+    # N, mean, and sd
+    datac <- ddply(data, groupvars, .drop=.drop,
+      .fun = function(xx, col) {
+        c(N    = length2(xx[[col]], na.rm=na.rm),
+          mean = mean   (xx[[col]], na.rm=na.rm),
+          sd   = sd     (xx[[col]], na.rm=na.rm)
+        )
+      },
+      measurevar
+    )
+
+    # Rename the "mean" column    
+    datac <- rename(datac, c("mean" = measurevar))
+
+    datac$se <- datac$sd / sqrt(datac$N)  # Calculate standard error of the mean
+
+    # Confidence interval multiplier for standard error
+    # Calculate t-statistic for confidence interval: 
+    # e.g., if conf.interval is .95, use .975 (above/below), and use df=N-1
+    ciMult <- qt(conf.interval/2 + .5, datac$N-1)
+    datac$ci <- datac$se * ciMult
+
+    return(datac)
+}
+##Filter abundance
+# function to perform pre-filtering
+low.count.removal = function(data, percent=0.01)
+{
+  keep.otu = which(colSums(data)*100/(sum(colSums(data))) > percent)
+  data.filter = data[,keep.otu]
+  return(list(data.filter = data.filter, keep.otu = keep.otu))
+}
+
+```
+
+#Background
+
+This report shows the analysis performed for metagenomics sequencing from the gut microbiome of 70 pregnancies (36 in women with T1D) from a total of 66 different women. For each pregnant woman, samples were taken at 1 to 3 different time points during the pregnancy (i.e. corresponding to trimesters, up until day ~280 when the child is born) to give a total of 134 samples. From the 32 pregnant women, 16 are diabetic (T1D). For some analyses, time points were categorised into trimesters, correspondence being:
+
+Trimester 1 = 0-99 days Trimester 2 = 100-196 days Trimester 3 = 196-280 days
+
+#Data generation
+
+Samples were shotgun sequenced using the NovaSeq 6000 illumina sequencing machine at the Ramaciotti Centre for Genomics located at the University of New South Wales (UNSW) in Sydney, Australia.
+
+##Processing the sequences: from sequence data to feature table
+
+The data was processed through pipelines developed by the group of Curtis Huttenhower at Harvard Univerisity and Broad Institute. These pipelines belong to the BioBakery.
+
+The raw data was uploaded to the short read archive (SRA) database (https://www.ncbi.nlm.nih.gov/sra/) with accession number PRJNA604850.
+
+KneadData (https://bitbucket.org/biobakery/biobakery/wiki/kneaddata) was used to filter human (“contaminant”) sequences as well as quality controlling the sequences This has to be done for each sample. Example:
+
+    kneaddata –input 4_S1_R1_001.fastq.gz –input 4_S1_R2_001.fastq.gz -db /home/users/allstaff/schulze.a/bin/Kneaddata/Homo_sapiens –trimmomatic /usr/local/bioinfsoftware/trimmomatic/trimmomatic-0.36 –output ./kneaddata_output -t 12
+
+HUMAnN2 (https://bitbucket.org/biobakery/humann2/wiki/Home) was employed to quantify gene families and pathways; and within HUMANn2, Metaphlan was also used to obtain taxonomic profiles. This process is also performed per sample and read pair1 and read pair2 need to be concatenated and saved in the same file prior to running HUMAn2 (i.e. end-pairing relationships are currently not taken into account during HUMAnN2’s alignment steps. This is due to the fact that HUMAnN2 strictly aligns reads to isolated coding sequences: either at the nucleotide level or through translated search. As such, it will frequently be the case that one read (READ1) will map inside a given coding sequence while its mate-pair (READ2) will not [information obtained from the manual]). Example of running HUMAnN2 with a sample:
+
+    humann2 -i NGU5366A1.fastq -o ./Output_HUMAnN2 –threads 28
+
+Running this outputs several files, among those is “NGU5366A1_metaphlan_bugs_list.tsv”, which is a list of the bacterial taxa found in that sample at all taxonomic levels (i.e. stratified data) and their relative normalizaed abundances. The script merge_metaphlan_tables.py was used to merge the MetaPhlAn output from several samples into one table taxa (rows) vs samples (columns) with the table enlisting the relative normalized abundances per sample per taxa. Example:
+
+    merge_metaphlan_tables.py metaphlan_output1.txt metaphlan_output2.txt metaphlan_output3.txt > ./merged_abundance_table_Rel_Abundance.txt
+
+As mentioned above, the abundance table (profile) contains the stratified data. In order to obtain a table that contains the taxa at a specific taxonomic level (e.g. Species), grep was used. Example for species taxonomic level:
+
+    grep ’s__’ merged_abundance_table_Rel_Abundance.txt | grep -v ’t’ > merged_abundance_table_Rel_Abundance_Sp.tsv # -v (exclude) ’t’ will prevent from selecting those lines that have species and strain (’t__’) classification. We just need species in this case.
+
+Example for genus taxonomic level:
+
+    grep ’g__’ merged_abundance_table_Rel_Abundance.txt | grep -v ’t’ | grep -v ’s’ > merged_abundance_table_Rel_Abundance_Genus.tsv
+
+Note: For other taxonomic levels, this process was repeated for each taxonomic level.
+
+This table contains the whole taxonomy for each taxa, from “kindom” to “Species” along with per sample abundances (i.e. counts per million [CPM]). From this table the taxonomy was obtained. The taxa table is then transformed into a biom file in JSON format and the taxonomic and metadata infomation were added with the software biom. Example:
+
+    biom convert -i merged_abundance_table_Rel_Abundance_Sp.tsv -o merged_abundance_table_Rel_Abundance_Sp.biom –table-type=“OTU table” –to-json
+    biom add-metadata –sc-separated taxonomy –observation-header OTUID,taxonomy –observation-metadata-fp Species_taxonomy.txt -i merged_abundance_table_Rel_Abundance_Sp.biom -o Pregnancy_NovaSeq_taxonomic_profile_Rel_Species_NV_wTax.biom
+    biom add-metadata -i Pregnancy_NovaSeq_taxonomic_profile_Rel_Species_NV_wTax.biom -o Pregnancy_NovaSeq_taxonomic_profile_Rel_Species_NV_wTaxMet.biom –sample-metadata-fp ./metadata.csv
+
+This process was repeated at for each taxonomic level.
+
+The resulting taxa tables (one for each taxonomic level) with taxonomies and metadata were imported into R to process with the Phyloseq (https://github.com/joey711/phyloseq) and other packages. The data were first de-identified (i.e. data relating to the identification of the donor was removed) and R objects were saved (i.e. A total of 6 taxonomic and 3 functional files were generated). Those R objects were used as inputs in the analysis performed in this document. These objects and other files used in this markdown can be found at https://github.com/PapenfussLab/RothSchulze_pregnancy-gut-microbiome-T1D and all the paths needs to be changed in this document in order to reproduce the analysis.
+
+
+```{r Taxonomy, echo=FALSE}
+Obj <- load("~/Documents/ENDIA Project/Data and analyses/ENDIA Projects analysis/ENDIA_Mothers/Manuscript/Manuscript_Pregnancy_Most_Current/Submission_2021/Code and datasets/Species_level_phyloseq_object.RData")
+SpeciesObj <- Mothers_OTU_AFilt1_Preg
+
+Obj <- load("~/Documents/ENDIA Project/Data and analyses/ENDIA Projects analysis/ENDIA_Mothers/Manuscript/Manuscript_Pregnancy_Most_Current/Submission_2021/Code and datasets/Strain_level_phyloseq_object.RData")
+StrainObj <- Mothers_OTU_AFilt1_Preg
+
+Obj <- load("~/Documents/ENDIA Project/Data and analyses/ENDIA Projects analysis/ENDIA_Mothers/Manuscript/Manuscript_Pregnancy_Most_Current/Submission_2021/Code and datasets/Genus_level_phyloseq_object.RData")
+GenusObj <- Mothers_OTU_AFilt1_Preg
+
+Obj <- load("~/Documents/ENDIA Project/Data and analyses/ENDIA Projects analysis/ENDIA_Mothers/Manuscript/Manuscript_Pregnancy_Most_Current/Submission_2021/Code and datasets/Family_level_phyloseq_object.RData")
+FamilyObj <- Mothers_OTU_AFilt1_Preg
+
+Obj <- load("~/Documents/ENDIA Project/Data and analyses/ENDIA Projects analysis/ENDIA_Mothers/Manuscript/Manuscript_Pregnancy_Most_Current/Submission_2021/Code and datasets/Order_level_phyloseq_object.RData")
+OrderObj <- Mothers_OTU_AFilt1_Preg
+
+Obj <- load("~/Documents/ENDIA Project/Data and analyses/ENDIA Projects analysis/ENDIA_Mothers/Manuscript/Manuscript_Pregnancy_Most_Current/Submission_2021/Code and datasets/Phylum_level_phyloseq_object.RData")
+PhylumObj <- Mothers_OTU_AFilt1_Preg
+
+#Mothers_OTU_AFilt1_Preg
+TLevel<-c("Species", "Strain", "Genus", "Family", "Order", "Phylum")
+
+Vec <- list("Species" = SpeciesObj, "Strain" =StrainObj, "Genus" = GenusObj, "Family"= FamilyObj, "Order"= OrderObj, "Phylum"= PhylumObj)
+Vec2 <- list("Species" = SpeciesObj, "Strain" =StrainObj, "Genus" = GenusObj, "Family"= FamilyObj, "Order"= OrderObj, "Phylum"= PhylumObj)
+
+
+for (i in 1:6) {
+T1Dcol = c("blue", "red")
+Mothers_OTU_AFilt1_Preg <- Vec[[i]]
+#Making sure each factor has the correct class
+#This factor corresponds to extraction batch
+sample_data(Mothers_OTU_AFilt1_Preg)$SeqRun <- as.factor(sample_data(Mothers_OTU_AFilt1_Preg)$SeqRun)
+#This factor corresponds to gestational age (day into pregnancy in which the sample was taken)
+sample_data(Mothers_OTU_AFilt1_Preg)$Days <- as.integer(as.character(sample_data(Mothers_OTU_AFilt1_Preg)$Days))
+#This factor corresponds to conception age
+sample_data(Mothers_OTU_AFilt1_Preg)$Age_LMP <- as.numeric(as.character(sample_data(Mothers_OTU_AFilt1_Preg)$Age_LMP))
+#This factor corresponds to Body Mass Index at conception time
+sample_data(Mothers_OTU_AFilt1_Preg)$BMI_conception <- as.numeric(as.character(sample_data(Mothers_OTU_AFilt1_Preg)$BMI_conception))
+#This factor corresponds to Human leukocyte antigen (HLA) type of the women
+sample_data(Mothers_OTU_AFilt1_Preg)$HLA.6DRML <- as.factor(sample_data(Mothers_OTU_AFilt1_Preg)$HLA.6DRML)
+#This factor corresponds to parity (which refers to if the women already had children before the current pregnancy)
+sample_data(Mothers_OTU_AFilt1_Preg)$Nulliparous <- as.factor(sample_data(Mothers_OTU_AFilt1_Preg)$Nulliparous)
+#This factor corresponds to a unique identifier per person (i.e. if the woman contributed samples from different pregnancies, those samples belong to the same motherid)
+sample_data(Mothers_OTU_AFilt1_Preg)$motherid <- as.factor(sample_data(Mothers_OTU_AFilt1_Preg)$motherid)
+#This factor corresponds to T1D status
+sample_data(Mothers_OTU_AFilt1_Preg)$T1Dstatus <- as.factor(sample_data(Mothers_OTU_AFilt1_Preg)$T1Dstatus)
+#This factor corresponds to trimester
+sample_data(Mothers_OTU_AFilt1_Preg)$TriCorr <- as.factor(sample_data(Mothers_OTU_AFilt1_Preg)$TriCorr)
+
+#This factor corresponds to a composed factor of trimester and T1D status, which is used in the differential abundance analysis.
+sample_data(Mothers_OTU_AFilt1_Preg)$TriwT1D <- factor(paste(sample_data(Mothers_OTU_AFilt1_Preg)$TriCorr,sample_data(Mothers_OTU_AFilt1_Preg)$T1Dstatus,sep="."))
+
+Vec2[[i]] <- Mothers_OTU_AFilt1_Preg
+}
+```
+
+#Taxonomic differential abundance analysis
+
+```{r DifferentialAbundanceTaxa, echo=FALSE}
+##Subset data for calculation of prevalence
+for(me in 1:6){
+Mothers_OTU_AFilt1_Preg <- Vec2[[me]]
+
+# Subset to have only mothers trimester 1
+Mothers_OTU_AFilt1_Preg_T1 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriCorr%in%c("T1"))
+Mothers_OTU_AFilt1_Preg_T1 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T1)>0, Mothers_OTU_AFilt1_Preg_T1)
+
+# Subset to have only mothers trimester 2
+Mothers_OTU_AFilt1_Preg_T2 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriCorr%in%c("T2"))
+Mothers_OTU_AFilt1_Preg_T2 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T2)>0, Mothers_OTU_AFilt1_Preg_T2)
+
+# Subset to have only mothers trimester 3 
+Mothers_OTU_AFilt1_Preg_T3 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriCorr%in%c("T3"))
+Mothers_OTU_AFilt1_Preg_T3 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T3)>0, Mothers_OTU_AFilt1_Preg_T3)
+
+# Subset for prevalence calculation
+Mothers_OTU_AFilt1_Preg_T1DT1T2 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriwT1D%in%c("T1.yes", "T2.yes"))
+Mothers_OTU_AFilt1_Preg_T1DT1T2 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T1DT1T2)>0, Mothers_OTU_AFilt1_Preg_T1DT1T2)
+
+Mothers_OTU_AFilt1_Preg_T1DT2T3 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriwT1D%in%c("T2.yes", "T3.yes"))
+Mothers_OTU_AFilt1_Preg_T1DT2T3 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T1DT2T3)>0, Mothers_OTU_AFilt1_Preg_T1DT2T3)
+
+Mothers_OTU_AFilt1_Preg_T1DT1T3 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriwT1D%in%c("T1.yes", "T3.yes"))
+Mothers_OTU_AFilt1_Preg_T1DT1T3 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T1DT1T3)>0, Mothers_OTU_AFilt1_Preg_T1DT1T3)
+
+Mothers_OTU_AFilt1_Preg_nonT1DT1T2 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriwT1D%in%c("T1.no", "T2.no"))
+Mothers_OTU_AFilt1_Preg_nonT1DT1T2 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_nonT1DT1T2)>0, Mothers_OTU_AFilt1_Preg_nonT1DT1T2)
+
+Mothers_OTU_AFilt1_Preg_nonT1DT2T3 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriwT1D%in%c("T2.no", "T3.no"))
+Mothers_OTU_AFilt1_Preg_nonT1DT2T3 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_nonT1DT2T3)>0, Mothers_OTU_AFilt1_Preg_nonT1DT2T3)
+
+Mothers_OTU_AFilt1_Preg_nonT1DT1T3 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriwT1D%in%c("T1.no", "T3.no"))
+Mothers_OTU_AFilt1_Preg_nonT1DT1T3 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_nonT1DT1T3)>0, Mothers_OTU_AFilt1_Preg_nonT1DT1T3)
+
+##Linear model with limma
+#Multiply by the library size after quality filter for each sample before imputing into limma
+LibSizes <- sample_data(Mothers_OTU_AFilt1_Preg)$Reads_after_kneaddata
+Counts <- as.data.frame(otu_table(Mothers_OTU_AFilt1_Preg))
+Counts_t <- t(Counts)
+PCounts <- data.frame(t(Counts_t*LibSizes))
+
+# Metadata (Perform a mean-correction of all the covariates and factors making sure all have the correct class)
+Meta_df <- as.data.frame(as.matrix(sample_data(Mothers_OTU_AFilt1_Preg)))
+#Processing batches
+Meta_df$SeqRun <- as.factor(Meta_df$SeqRun)
+contrasts(Meta_df$SeqRun) <- contr.sum(levels(Meta_df$SeqRun))
+#HLA type
+Meta_df$HLA.6DRML <- as.factor(Meta_df$HLA.6DRML)
+contrasts(Meta_df$HLA.6DRML) <- contr.sum(levels(Meta_df$HLA.6DRML))
+#Conception age
+Meta_df$Age_LMP <- as.numeric(as.character(Meta_df$Age_LMP))
+Meta_df$Age_LMP <- Meta_df$Age_LMP - mean(Meta_df$Age_LMP)
+#BMI
+Meta_df$BMI_conception <- as.numeric(as.character(Meta_df$BMI_conception))
+Meta_df$BMI_conception <- Meta_df$BMI_conception - mean(Meta_df$BMI_conception)
+#Parity
+Meta_df$Nulliparous <- factor(Meta_df$Nulliparous, levels=c(0,1), labels=c("No", "Yes"))
+contrasts(Meta_df$Nulliparous) <- contr.sum(levels(Meta_df$Nulliparous))
+
+#design
+design <- model.matrix(~0 + TriwT1D + SeqRun  + Nulliparous + Age_LMP + BMI_conception + HLA.6DRML, data=Meta_df)
+
+#Make DGEList and apply abundance filters
+dge <- DGEList(PCounts, group= Meta_df$TriwT1D)
+#EdgeR filter
+keep <- filterByExpr(dge)
+dge <- dge[keep,,keep.lib.sizes=FALSE]
+#Abundance: Filter all Species les than 0.01% total abundance across all samples
+result.filter = low.count.removal(t(dge$counts), percent=0.01)
+Keep_OTUS <- names(result.filter$keep.otu)
+dge <- dge[Keep_OTUS,,keep.lib.sizes=FALSE]
+#Prevalence filter
+M <- dge$counts
+M[M>0] <-1
+keepP <- rowSums(M) > 33
+dge <- dge[keepP,,keep.lib.sizes=FALSE]
+#Calculate normalization factors to scale the raw library sizes
+dgeTMM <- edgeR::calcNormFactors(dge, method = "TMMwsp")
+#Using version 10 June 2020 of voomLmFit function from EdgeR. Block by motherid factor (i.e. Woman ID for samples from the same woman but different pregnancies)
+fit <- voomLmFit(dgeTMM, design = design , plot = FALSE, block= Meta_df$motherid)
+
+#Define and create contrasts
+##Contrast nonT1D_vs_T1D is composed of the addition of all trimesters in T1D and divided by 3 (average) vs the same for nonT1D to answer if there are differences in general independent of Trimester. The other contrasts are T1, T2 and T3 for looking into differences between women with and without T1D within each trimester and differences between trimesters were assessed in general (e.g. T1_vs_T2) or within T1D status (e.g. for differences between T1 and T3 within women with T1D: T1DT1vsT3)
+cont <- makeContrasts(nonT1D_vs_T1D=(TriwT1DT1.no + TriwT1DT2.no + TriwT1DT3.no)/3 - (TriwT1DT1.yes + TriwT1DT2.yes + TriwT1DT3.yes)/3, T1= TriwT1DT1.no - TriwT1DT1.yes, T2= TriwT1DT2.no - TriwT1DT2.yes, T3= TriwT1DT3.no - TriwT1DT3.yes, T1_vs_T2=(TriwT1DT1.no + TriwT1DT1.yes)/2 - (TriwT1DT2.no + TriwT1DT2.yes)/2, T2_vs_T3=(TriwT1DT2.no + TriwT1DT2.yes)/2 - (TriwT1DT3.no + TriwT1DT3.yes)/2, T1_vs_T3=(TriwT1DT1.no + TriwT1DT1.yes)/2 - (TriwT1DT3.no + TriwT1DT3.yes)/2, T1DT1vsT2=TriwT1DT1.yes -TriwT1DT2.yes, T1DT2vsT3=TriwT1DT2.yes -TriwT1DT3.yes, T1DT1vsT3=TriwT1DT1.yes -TriwT1DT3.yes, noT1DT1vsT2=TriwT1DT1.no -TriwT1DT2.no, noT1DT2vsT3=TriwT1DT2.no -TriwT1DT3.no, noT1DT1vsT3=TriwT1DT1.no -TriwT1DT3.no, levels=design)
+
+#Fit data with contrasts
+fitc <- contrasts.fit(fit, contrasts = cont)
+fitc <- eBayes(fitc, robust=TRUE)
+DT<- decideTests(fitc)
+summary(DT)
+
+#Calculate mean and stadard errors for each unit of comparison for making the visualisation plots.
+Mean <- fit$coef[,1:6]
+SE <- fit$stdev.unscaled[,1:6] * sqrt(fitc$s2.post)
+
+##Differential abundance between women with and without T1D across pregnancy
+
+###nonT1D_vs_T1D###
+#Obtain results for contrast
+tt_nonT1D_vs_T1D <- topTable(fitc, coef = "nonT1D_vs_T1D", n=Inf)
+#Filter to obtain only taxa with FDR (i.e. adjusted P-value < 0.1)
+DA_GG <- (row.names(tt_nonT1D_vs_T1D))[tt_nonT1D_vs_T1D$P.Value<0.05]
+RESlimma <- tt_nonT1D_vs_T1D
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg)
+x_PA <- as.data.frame(t(Counts))
+### Presence / absence
+x_PA[x_PA >0] <- 1
+###Prevalence 
+xFil_PA<-split(x_PA, sample_data(Mothers_OTU_AFilt1_Preg)$T1Dstatus)
+}
+TriNam <- "All"
+##Prevalence and LogFC filter
+####Counts###
+if(length(DA_GG)>0){
+if(length(DA_GG)>1){
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1,4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+rownames(TableCom) <- c(1:NU)
+colnames(TableCom) <- c("Classification",  "LogFC", "P.Val", "adj.P.Val", "Prev%",  "T1D:Prev%")
+#Filter to obtain only taxa that have prevalence >50% at least in one of the groups 
+TableCom2 <- filter(TableCom, `Prev%` >= !!47 | `T1D:Prev%` >= !!47)
+#Filter to obtain taxa with LogFC > 0.5 or < -0.5
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1,4:5)], round(x_PA_RelFil_Res,3))
+rownames(TableCom) <- c("non-T1D", "T1D")
+colnames(TableCom) <- c("Classification",  "LogFC", "P.Val", "adj.P.Val", "Prev%")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47 )
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+
+}
+} else {
+##print("No DA taxa found")  
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##Table with calculations
+
+####ErrorBarsSAll####
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+  
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+RDA[i+pn,"Trimester"] <- TriNam
+RDA[i+pn,"Taxa"] <- DA1
+RDA[i+pn, "TaxLevel"] <- TLevel[me]
+RDA[i+pn, 4:8] <- TA[DA1,c(2:6)]
+RDA[i+pn, 9:14] <- Mean[DA1,]
+RDA[i+pn, 15:20] <- SE[DA1,]
+}
+pn=pn+i
+i=0
+TA=0
+}
+
+##Differential abundance between women with and without T1D in Trimester 1
+tt_T1 <- topTable(fitc, coef = "T1", n=Inf)
+DA_GG <- (row.names(tt_T1))[tt_T1$P.Value<0.05]
+RESlimma <- tt_T1
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg)
+Dummy1 <- Mothers_OTU_AFilt1_Preg_T1
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy1))))
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy1)$T1Dstatus)
+}
+TriNam <- "T1"
+####Counts###
+if(length(DA_GG)>0){
+if(length(DA_GG)>1){
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1,4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+rownames(TableCom) <- c(1:NU)
+colnames(TableCom) <- c("Classification",  "LogFC", "P.Val", "adj.P.Val", "Prev%",  "T1D:Prev%")
+#Filter to obtain only taxa that have prevalence >50% at least in one of the groups 
+TableCom2 <- filter(TableCom, `Prev%` >= !!47 | `T1D:Prev%` >= !!47)
+#Filter to obtain taxa with LogFC > 0.5 or < -0.5
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1,4:5)], round(x_PA_RelFil_Res,3))
+rownames(TableCom) <- c("non-T1D", "T1D")
+colnames(TableCom) <- c("Classification",  "LogFC", "P.Val", "adj.P.Val", "Prev%")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47 )
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+
+}
+} else {
+##print("No DA taxa found")  
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##Table with calculations
+
+####ErrorBarsSAll####
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+  
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+RDA[i+pn,"Trimester"] <- TriNam
+RDA[i+pn,"Taxa"] <- DA1
+RDA[i+pn, "TaxLevel"] <- TLevel[me]
+RDA[i+pn, 4:8] <- TA[DA1,c(2:6)]
+RDA[i+pn, 9:14] <- Mean[DA1,]
+RDA[i+pn, 15:20] <- SE[DA1,]
+}
+pn=pn+i
+i=0
+TA=0
+}
+
+##Differential abundance between women with and without T1D in Trimester 2
+tt_T2 <- topTable(fitc, coef = "T2", n=Inf)
+DA_GG <- (row.names(tt_T2))[tt_T2$P.Value<0.05]
+RESlimma <- tt_T2
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg)
+Dummy1 <- Mothers_OTU_AFilt1_Preg_T2
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy1))))
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy1)$T1Dstatus)
+}
+TriNam <- "T2"
+####Counts###
+if(length(DA_GG)>0){
+if(length(DA_GG)>1){
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1,4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+rownames(TableCom) <- c(1:NU)
+colnames(TableCom) <- c("Classification",  "LogFC", "P.Val", "adj.P.Val", "Prev%",  "T1D:Prev%")
+#Filter to obtain only taxa that have prevalence >50% at least in one of the groups 
+TableCom2 <- filter(TableCom, `Prev%` >= !!47 | `T1D:Prev%` >= !!47)
+#Filter to obtain taxa with LogFC > 0.5 or < -0.5
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1,4:5)], round(x_PA_RelFil_Res,3))
+rownames(TableCom) <- c("non-T1D", "T1D")
+colnames(TableCom) <- c("Classification",  "LogFC", "P.Val", "adj.P.Val", "Prev%")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47 )
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+
+}
+} else {
+##print("No DA taxa found")  
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##Table with calculations
+
+####ErrorBarsSAll####
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+  
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+RDA[i+pn,"Trimester"] <- TriNam
+RDA[i+pn,"Taxa"] <- DA1
+RDA[i+pn, "TaxLevel"] <- TLevel[me]
+RDA[i+pn, 4:8] <- TA[DA1,c(2:6)]
+RDA[i+pn, 9:14] <- Mean[DA1,]
+RDA[i+pn, 15:20] <- SE[DA1,]
+}
+pn=pn+i
+i=0
+TA=0
+}
+
+##Differential abundance between women with and without T1D in Trimester 3
+
+tt_T3 <- topTable(fitc, coef = "T3", n=Inf)
+DA_GG <- (row.names(tt_T3))[tt_T3$P.Value<0.05]
+RESlimma <- tt_T3
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg)
+Dummy1 <- Mothers_OTU_AFilt1_Preg_T3
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy1))))
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy1)$T1Dstatus)
+}
+TriNam <- "T3"
+####Counts###
+if(length(DA_GG)>0){
+if(length(DA_GG)>1){
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1,4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+rownames(TableCom) <- c(1:NU)
+colnames(TableCom) <- c("Classification",  "LogFC", "P.Val", "adj.P.Val", "Prev%",  "T1D:Prev%")
+#Filter to obtain only taxa that have prevalence >50% at least in one of the groups 
+TableCom2 <- filter(TableCom, `Prev%` >= !!47 | `T1D:Prev%` >= !!47)
+#Filter to obtain taxa with LogFC > 0.5 or < -0.5
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1,4:5)], round(x_PA_RelFil_Res,3))
+rownames(TableCom) <- c("non-T1D", "T1D")
+colnames(TableCom) <- c("Classification",  "LogFC", "P.Val", "adj.P.Val", "Prev%")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47 )
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+
+}
+} else {
+##print("No DA taxa found")  
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##Table with calculations
+
+####ErrorBarsSAll####
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+  
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+RDA[i+pn,"Trimester"] <- TriNam
+RDA[i+pn,"Taxa"] <- DA1
+RDA[i+pn, "TaxLevel"] <- TLevel[me]
+RDA[i+pn, 4:8] <- TA[DA1,c(2:6)]
+RDA[i+pn, 9:14] <- Mean[DA1,]
+RDA[i+pn, 15:20] <- SE[DA1,]
+}
+pn=pn+i
+i=0
+TA=0
+}
+
+##Differential abundance between T1 and T2 in women with T1D
+
+tt_T1DT1_vs_T2 <- topTable(fitc, coef = "T1DT1vsT2", n=Inf)
+DA_GG <- (row.names(tt_T1DT1_vs_T2))[tt_T1DT1_vs_T2$P.Value<0.05]
+RESlimma <- tt_T1DT1_vs_T2
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg_T1DT1T2)
+Dummy2 <- Mothers_OTU_AFilt1_Preg_T1DT1T2
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy2))) )
+}
+TriNam <- "T12T1D"
+
+###CountsT1DTrimesters###
+
+if(length(DA_GG)>0){
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy2)$TriCorr)
+
+if(length(DA_GG)>1){
+## T1D vs nonT1D Average relative abundance (%)
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val", "TBPrev%", "TAPrev%")
+TableCom2 <- filter(TableCom, `TBPrev%` >= !!47 | `TAPrev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res,3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val","Prev%")
+rownames(TableCom) <- c("TB", "TA")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+}
+} else {
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##ErrorBarsT1DTrimesters##
+
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+QDA[i+tn,"Trimester"] <- TriNam
+QDA[i+tn,"Taxa"] <- DA1
+QDA[i+tn, "TaxLevel"] <- TLevel[me]
+QDA[i+tn, 4:8] <- TA[DA1,c(2:6)]
+QDA[i+tn, 9:14] <- Mean[DA1,]
+QDA[i+tn, 15:20] <- SE[DA1,]
+
+}
+tn=tn+i
+i=0
+TA=0
+}
+
+##Differential abundance between T2 and T3 in women with T1D
+
+tt_T1DT2_vs_T3 <- topTable(fitc, coef = "T1DT2vsT3", n=Inf)
+DA_GG <- (row.names(tt_T1DT2_vs_T3))[tt_T1DT2_vs_T3$P.Value<0.05]
+RESlimma <- tt_T1DT2_vs_T3 
+if(length(DA_GG)>0){
+DA_GG <- as.character(DA_GG)
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg_T1DT2T3)
+Dummy2 <- Mothers_OTU_AFilt1_Preg_T1DT2T3
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy2)))) 
+}
+TriNam <- "T23T1D"
+###CountsT1DTrimesters###
+
+if(length(DA_GG)>0){
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy2)$TriCorr)
+
+if(length(DA_GG)>1){
+## T1D vs nonT1D Average relative abundance (%)
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val", "TBPrev%", "TAPrev%")
+TableCom2 <- filter(TableCom, `TBPrev%` >= !!47 | `TAPrev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res,3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val","Prev%")
+rownames(TableCom) <- c("TB", "TA")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+}
+} else {
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##ErrorBarsT1DTrimesters##
+
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+QDA[i+tn,"Trimester"] <- TriNam
+QDA[i+tn,"Taxa"] <- DA1
+QDA[i+tn, "TaxLevel"] <- TLevel[me]
+QDA[i+tn, 4:8] <- TA[DA1,c(2:6)]
+QDA[i+tn, 9:14] <- Mean[DA1,]
+QDA[i+tn, 15:20] <- SE[DA1,]
+
+}
+tn=tn+i
+i=0
+TA=0
+}
+
+##Differential abundance between T1 and T3 in women with T1D
+
+tt_T1DT1_vs_T3 <- topTable(fitc, coef = "T1DT1vsT3", n=Inf)
+DA_GG <- (row.names(tt_T1DT1_vs_T3))[tt_T1DT1_vs_T3$P.Value<0.05]
+RESlimma <- tt_T1DT1_vs_T3 
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg_T1DT1T3)
+Dummy2 <- Mothers_OTU_AFilt1_Preg_T1DT1T3
+# Relative abundance counts
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy2)))) 
+}
+TriNam <- "T13T1D"
+###CountsT1DTrimesters###
+
+if(length(DA_GG)>0){
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy2)$TriCorr)
+
+if(length(DA_GG)>1){
+## T1D vs nonT1D Average relative abundance (%)
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val", "TBPrev%", "TAPrev%")
+TableCom2 <- filter(TableCom, `TBPrev%` >= !!47 | `TAPrev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res,3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val","Prev%")
+rownames(TableCom) <- c("TB", "TA")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+}
+} else {
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##ErrorBarsT1DTrimesters##
+
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+QDA[i+tn,"Trimester"] <- TriNam
+QDA[i+tn,"Taxa"] <- DA1
+QDA[i+tn, "TaxLevel"] <- TLevel[me]
+QDA[i+tn, 4:8] <- TA[DA1,c(2:6)]
+QDA[i+tn, 9:14] <- Mean[DA1,]
+QDA[i+tn, 15:20] <- SE[DA1,]
+
+}
+tn=tn+i
+i=0
+TA=0
+}
+
+##Differential abundance between T1 and T2 in women without T1D
+
+tt_nonT1DT1_vs_T2 <- topTable(fitc, coef = "noT1DT1vsT2", n=Inf)
+DA_GG <- (row.names(tt_nonT1DT1_vs_T2))[tt_nonT1DT1_vs_T2$P.Value<0.05]
+RESlimma <- tt_nonT1DT1_vs_T2 
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg_nonT1DT1T2)
+Dummy2 <- Mothers_OTU_AFilt1_Preg_nonT1DT1T2
+# Relative abundance counts
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy2))))
+}
+TriNam <- "T12NT1D"
+###CountsT1DTrimesters###
+
+if(length(DA_GG)>0){
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy2)$TriCorr)
+
+if(length(DA_GG)>1){
+## T1D vs nonT1D Average relative abundance (%)
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val", "TBPrev%", "TAPrev%")
+TableCom2 <- filter(TableCom, `TBPrev%` >= !!47 | `TAPrev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res,3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val","Prev%")
+rownames(TableCom) <- c("TB", "TA")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+}
+} else {
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##ErrorBarsT1DTrimesters##
+
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+QDA[i+tn,"Trimester"] <- TriNam
+QDA[i+tn,"Taxa"] <- DA1
+QDA[i+tn, "TaxLevel"] <- TLevel[me]
+QDA[i+tn, 4:8] <- TA[DA1,c(2:6)]
+QDA[i+tn, 9:14] <- Mean[DA1,]
+QDA[i+tn, 15:20] <- SE[DA1,]
+
+}
+tn=tn+i
+i=0
+TA=0
+}
+
+##Differential abundance between T2 and 3 in women without T1D
+
+tt_nonT1DT2_vs_T3 <- topTable(fitc, coef = "noT1DT2vsT3", n=Inf)
+DA_GG <- (row.names(tt_nonT1DT2_vs_T3))[tt_nonT1DT2_vs_T3$P.Value<0.05]
+RESlimma <- tt_nonT1DT2_vs_T3 
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg_nonT1DT2T3)
+Dummy2 <- Mothers_OTU_AFilt1_Preg_nonT1DT2T3
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy2))))
+}
+TriNam <- "T23NT1D"
+###CountsT1DTrimesters###
+
+if(length(DA_GG)>0){
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy2)$TriCorr)
+
+if(length(DA_GG)>1){
+## T1D vs nonT1D Average relative abundance (%)
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val", "TBPrev%", "TAPrev%")
+TableCom2 <- filter(TableCom, `TBPrev%` >= !!47 | `TAPrev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res,3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val","Prev%")
+rownames(TableCom) <- c("TB", "TA")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+}
+} else {
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##ErrorBarsT1DTrimesters##
+
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+QDA[i+tn,"Trimester"] <- TriNam
+QDA[i+tn,"Taxa"] <- DA1
+QDA[i+tn, "TaxLevel"] <- TLevel[me]
+QDA[i+tn, 4:8] <- TA[DA1,c(2:6)]
+QDA[i+tn, 9:14] <- Mean[DA1,]
+QDA[i+tn, 15:20] <- SE[DA1,]
+
+}
+tn=tn+i
+i=0
+TA=0
+}
+
+##Differential abundance between T1 and T3 in women without T1D
+
+tt_nonT1DT1_vs_T3 <- topTable(fitc, coef = "noT1DT1vsT3", n=Inf)
+DA_GG <- (row.names(tt_nonT1DT1_vs_T3))[tt_nonT1DT1_vs_T3$P.Value<0.05]
+RESlimma <- tt_nonT1DT1_vs_T3 
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg_nonT1DT1T3)
+Dummy2 <- Mothers_OTU_AFilt1_Preg_nonT1DT1T3
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy2))))
+}
+TriNam <- "T13NT1D"
+###CountsT1DTrimesters###
+
+if(length(DA_GG)>0){
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy2)$TriCorr)
+
+if(length(DA_GG)>1){
+## T1D vs nonT1D Average relative abundance (%)
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val", "TBPrev%", "TAPrev%")
+TableCom2 <- filter(TableCom, `TBPrev%` >= !!47 | `TAPrev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res,3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val","Prev%")
+rownames(TableCom) <- c("TB", "TA")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+}
+} else {
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##ErrorBarsT1DTrimesters##
+
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+QDA[i+tn,"Trimester"] <- TriNam
+QDA[i+tn,"Taxa"] <- DA1
+QDA[i+tn, "TaxLevel"] <- TLevel[me]
+QDA[i+tn, 4:8] <- TA[DA1,c(2:6)]
+QDA[i+tn, 9:14] <- Mean[DA1,]
+QDA[i+tn, 15:20] <- SE[DA1,]
+
+}
+tn=tn+i
+i=0
+TA=0
+}
+}
+```
+
+
+##DA taxa (T1D vs. non-T1D) statistics
+
+```{r PN, echo=FALSE, fig.height=60, fig.width=15}
+RDAP <- RDA[,1:8]
+RDAP <- RDAP[RDAP$adj.P.Val < 0.1,]
+RDAP$P.Val <- round(RDAP$P.Val, 5)
+RDAP$adj.P.Val <- round(RDAP$adj.P.Val, 3)
+kable(RDAP) %>% kable_styling(bootstrap_options = "striped", full_width = F, position = "left") 
+
+RDAG <- RDA[,c(2:3, 9:20)]
+#kable(RDAG) %>% kable_styling(bootstrap_options = "striped", full_width = F, position = "left") 
+
+RDAG <- distinct(RDAG)
+```
+
+##DA taxa (T1D vs. non-T1D) plots
+
+```{r PrintDATaxRDA, echo=FALSE, fig.height=8, fig.width=12}
+PlotJ = list()
+# Subset RDAG to stay only with 
+namesJ <- c("Bacteroides_caccae_St_Bacteroides_caccae_unclassified", "Bacteroides_vulgatus_St_Bacteroides_vulgatus_unclassified", "Bacteroides_uniformis", "Enterobacteriales", "Bacteroidales_bacterium_ph8_St_GCF_000311925", "Bifidobacteriales")
+RDAG <- subset(RDAG, RDAG$Taxa %in% namesJ)
+rownames(RDAG) <- RDAG$Taxa 
+RDAG <- RDAG[namesJ,]
+namesJN <- c("Bacteroides caccae unc. strain", "Bacteroides vulgatus unc. strain", "Bacteroides uniformis", "Enterobacteriales", "Bacteroidales ph8 strain GCF000311925", "Bifidobacteriales")
+
+
+for(i in 1:nrow(RDAG)){
+X <- RDAG[i,]
+S <- data.frame(Taxa=as.character(), TaxLevel=as.character(), TriwT1D=as.character(),  Mean=as.numeric(), SE=as.numeric(), T1Dstatus=as.character(), Trimester=as.character(), stringsAsFactors=FALSE)
+S[1:6,1] <- X[1,1]
+S[1:6,2] <- X[1,2]
+S[1:6,3] <- colnames(X)[3:8]
+S[1:6,4] <- as.numeric(X[1,3:8])
+S[1:6,5] <- as.numeric(X[1,9:14])
+S[1:6,6] <- c("no", "yes", "no", "yes", "no", "yes")
+S[1:6,7] <- c("T1", "T1", "T2", "T2", "T3", "T3")
+T1Dcol <- c("blue", "red")
+pd <- position_dodge(0.1)
+p2 <- ggplot(S, aes(x=Trimester, y=Mean, colour=T1Dstatus, group=T1Dstatus))
+J <-  p2 + geom_errorbar(aes(ymin=Mean-SE, ymax=Mean+SE), width=.1, position=pd) + geom_line(position=pd, size=1.5) + geom_point(position=pd, size=3, shape=21, fill="white") + theme(axis.title.x = element_blank(), axis.title.y = element_blank()) + theme(axis.text.y =element_text(size=14), axis.text.x =element_blank()) + theme(legend.title = element_text(size=7, face="bold")) + scale_fill_manual(values=T1Dcol) + scale_color_manual(values=T1Dcol) + theme(legend.position='none')  + ggtitle(namesJN[i])  + theme(plot.title = element_text(face = "italic")) + scale_y_continuous(labels = scales::number_format(accuracy = 0.1))
+PlotJ[[i]] <- J
+}
+
+gP <- gridExtra::arrangeGrob(grobs = PlotJ, ncol=3)
+plot(gP)
+#ggsave(file="~/Documents/ENDIA Project/Data and analyses/ENDIA Projects analysis/ENDIA_Mothers/Manuscript/Manuscript_Pregnancy_Most_Current/Submission_Nov_2020/Main figures/Figure_3.pdf", gP, width = 12, height = 6.5) 
+```
+
+##DA taxa (Trimesters) statistics
+
+```{r TN, echo=FALSE, fig.height=100, fig.width=15}
+#tn
+QDAP <- QDA[,1:8]
+QDAP <- QDAP[QDAP$adj.P.Val < 0.1,]
+QDAP$P.Val <- round(QDAP$P.Val, 5)
+QDAP$adj.P.Val <- round(QDAP$adj.P.Val, 3)
+kable(QDAP) %>% kable_styling(bootstrap_options = "striped", full_width = F, position = "left") 
+QDAG <- QDA[,c(2:3, 9:20)]
+#kable(QDAG) %>% kable_styling(bootstrap_options = "striped", full_width = F, position = "left") 
+
+QDAG <- distinct(QDAG)
+```
+
+##DA taxa (Trimesters) plots
+
+```{r PrintDATaxQDA, echo=FALSE, fig.height=12, fig.width=15}
+PlotJ = list()
+namesJ <- c("Peptostreptococcaceae_noname_unclassified", "Odoribacter_splanchnicus", "Prevotella", "Porphyromonadaceae", "Anaerostipes_hadrus_St_GCF_000332875", "Bifidobacterium_animalis_St_Bifidobacterium_animalis_unclassified", "Haemophilus_parainfluenzae_St_Haemophilus_parainfluenzae_unclassified", "Lachnospiraceae_bacterium_1_1_57FAA_St_GCF_000218445", "Veillonella_unclassified", "Streptococcus_thermophilus_St_Streptococcus_thermophilus_unclassified", "Ruminococcus_sp_5_1_39BFAA_St_GCF_000159975", "Lachnospiraceae_bacterium_3_1_57FAA_CT1_St_GCF_000218405")
+QDAG <- subset(QDAG, QDAG$Taxa %in% namesJ)
+rownames(QDAG) <- QDAG$Taxa 
+QDAG <- QDAG[namesJ,]
+namesJN <- c("Peptostreptococcaceae unc. species", "Odoribacter splanchnicus", "Prevotella", "Porphyromonadaceae", "Anaerostipes hadrus GCF000332875", "Bifidobacterium animalis unc. strain", "Haemophilus parainfluenzae unc. strain", "Lachnospiraceae 1157FAA GCF000218445", "Veillonella unc. species", "Streptococcus thermophilus unc. strain", "Ruminococcus 5139BFAA GCF000159975", "Lachnospiraceae 3157FAACT1 GCF000218405")
+
+for(i in 1:nrow(QDAG)){
+X <- QDAG[i,]
+S <- data.frame(Taxa=as.character(), TaxLevel=as.character(), TriwT1D=as.character(),  Mean=as.numeric(), SE=as.numeric(), T1Dstatus=as.character(), Trimester=as.character(), stringsAsFactors=FALSE)
+S[1:6,1] <- X[1,1]
+S[1:6,2] <- X[1,2]
+S[1:6,3] <- colnames(X)[3:8]
+S[1:6,4] <- as.numeric(X[1,3:8])
+S[1:6,5] <- as.numeric(X[1,9:14])
+S[1:6,6] <- c("no", "yes", "no", "yes", "no", "yes")
+S[1:6,7] <- c("T1", "T1", "T2", "T2", "T3", "T3")
+
+pd <- position_dodge(0.1)
+p2 <- ggplot(S, aes(x=Trimester, y=Mean, colour=T1Dstatus, group=T1Dstatus))
+J <-  p2 + geom_errorbar(aes(ymin=Mean-SE, ymax=Mean+SE), width=.1, position=pd) + geom_line(position=pd, size=1.5) + geom_point(position=pd, size=3, shape=21, fill="white") + theme(axis.title.x = element_blank(), axis.title.y = element_blank()) + theme(axis.text.y =element_text(size=14), axis.text.x =element_blank()) + theme(legend.title = element_text(size=4, face="bold")) + scale_fill_manual(values=T1Dcol) + scale_color_manual(values=T1Dcol) + theme(legend.position='none')  + ggtitle(namesJN[i])  + theme(plot.title = element_text(face = "italic", size=12)) + scale_y_continuous(labels = scales::number_format(accuracy = 0.1))
+PlotJ[[i]] <- J
+}
+
+gP <- gridExtra::arrangeGrob(grobs = PlotJ, ncol=4)
+plot(gP)
+#ggsave(file="~/Documents/ENDIA Project/Data and analyses/ENDIA Projects analysis/ENDIA_Mothers/Manuscript/Manuscript_Pregnancy_Most_Current/Submission_2021/Supp figures/Figure_S8.pdf", gP, width = 17, height = 9) 
+```
+
+#Sensitivity analysis
+
+Is it possible to detect differences in trimester 3 when we use the same number of samples used in trimester 1 in the main analysis?
+
+Yes, we were able to detect 13 differentialy abundant species, 13 strains, 2 genera, 3 families, 2 orders and 3 phyla. From these, species Bacteroides caccae and B. uniformis, an unclassified strain of B. caccae and the order Bifidobacteriales were also detected in the larger dataset.
+
+```{r DifferentialAbundanceTaxa2, echo=FALSE}
+for(me in 1:6){
+Mothers_OTU_AFilt1_Preg <- Vec2[[me]]
+
+T1 <-  subset_samples(Mothers_OTU_AFilt1_Preg, TriCorr=="T1")
+T1N <- sample_data(T1)$motherid
+T3_T1subset <- subset_samples(Mothers_OTU_AFilt1_Preg, motherid%in%T1N)
+#Remove 5468_1_T3 since 5468_1_T1 is not in the T1 dataset
+T3_T1subset <-  subset_samples(T3_T1subset, sample_id!="5468_1_T3")
+T3_T1subset <- prune_taxa(taxa_sums(T3_T1subset)>0, T3_T1subset)
+
+##Linear model with limma
+#Multiply by the library size after quality filter for each sample before imputing into limma
+LibSizes <- sample_data(T3_T1subset)$Reads_after_kneaddata
+Counts <- as.data.frame(otu_table(T3_T1subset))
+Counts_t <- t(Counts)
+PCounts <- data.frame(t(Counts_t*LibSizes))
+
+# Metadata (Perform a mean-correction of all the covariates and factors making sure all have the correct class)
+Meta_df <- as.data.frame(as.matrix(sample_data(T3_T1subset)))
+#Processing batches
+Meta_df$SeqRun <- as.factor(Meta_df$SeqRun)
+contrasts(Meta_df$SeqRun) <- contr.sum(levels(Meta_df$SeqRun))
+#HLA type
+Meta_df$HLA.6DRML <- as.factor(Meta_df$HLA.6DRML)
+contrasts(Meta_df$HLA.6DRML) <- contr.sum(levels(Meta_df$HLA.6DRML))
+#Conception age
+Meta_df$Age_LMP <- as.numeric(as.character(Meta_df$Age_LMP))
+Meta_df$Age_LMP <- Meta_df$Age_LMP - mean(Meta_df$Age_LMP)
+#BMI
+Meta_df$BMI_conception <- as.numeric(as.character(Meta_df$BMI_conception))
+Meta_df$BMI_conception <- Meta_df$BMI_conception - mean(Meta_df$BMI_conception)
+#Parity
+Meta_df$Nulliparous <- factor(Meta_df$Nulliparous, levels=c(0,1), labels=c("No", "Yes"))
+contrasts(Meta_df$Nulliparous) <- contr.sum(levels(Meta_df$Nulliparous))
+
+#design
+design <- model.matrix(~0 + TriwT1D + SeqRun  + Nulliparous + Age_LMP + BMI_conception + HLA.6DRML, data=Meta_df)
+
+#Make DGEList and apply abundance filters
+dge <- DGEList(PCounts, group= Meta_df$TriwT1D)
+#EdgeR filter
+keep <- filterByExpr(dge)
+dge <- dge[keep,,keep.lib.sizes=FALSE]
+#Abundance: Filter all Species les than 0.01% total abundance across all samples
+result.filter = low.count.removal(t(dge$counts), percent=0.01)
+Keep_OTUS <- names(result.filter$keep.otu)
+dge <- dge[Keep_OTUS,,keep.lib.sizes=FALSE]
+#Prevalence filter
+M <- dge$counts
+M[M>0] <-1
+keepP <- rowSums(M) > 23
+dge <- dge[keepP,,keep.lib.sizes=FALSE]
+#Calculate normalization factors to scale the raw library sizes
+dgeTMM <- edgeR::calcNormFactors(dge, method = "TMMwsp")
+#Using version 10 June 2020 of voomLmFit function from EdgeR. Block by motherid factor (i.e. Woman ID for samples from the same woman but different pregnancies)
+fit <- voomLmFit(dgeTMM, design = design , plot = FALSE)
+
+#Define and create contrasts
+cont <- makeContrasts(T3= TriwT1DT3.no - TriwT1DT3.yes, levels=design)
+
+#Fit data with contrasts
+fitc <- contrasts.fit(fit, contrasts = cont)
+fitc <- eBayes(fitc, robust=TRUE)
+DT<- decideTests(fitc)
+summary(DT)
+}
+
+tt_T3N <- topTable(fitc, coef = "T3", n=15)
+#topTable Species 
+#                                  logFC AveExpr     t  P.Value adj.P.Val      B
+#Bacteroides_uniformis             -2.95 14.8227 -3.91 0.000227    0.0116  0.456
+#Parabacteroides_unclassified      12.14  0.9087  4.12 0.000110    0.0112  0.283
+#Bacteroides_faecis                -7.47  5.9455 -3.53 0.000766    0.0260 -0.974
+#Bacteroides_salyersiae           -10.93 -0.1254 -3.50 0.001133    0.0289 -1.506
+#Bacteroides_clarus               -10.70  0.6463 -3.29 0.001630    0.0333 -1.882
+#Ruminococcus_bromii                4.96 10.8894  2.84 0.005972    0.0802 -2.277
+#Parabacteroides_johnsonii         -8.89 -0.0311 -3.03 0.003613    0.0614 -2.332
+#Bacteroides_xylanisolvens         -4.10  7.1020 -2.80 0.006747    0.0802 -2.449
+#Roseburia_intestinalis             7.60  5.6671  2.72 0.008399    0.0802 -2.635
+#Ruminococcus_obeum                 1.92 11.6587  2.68 0.009434    0.0802 -2.682
+#Parasutterella_excrementihominis   6.92  5.1540  2.69 0.009106    0.0802 -2.729
+#Ruminococcus_sp_5_1_39BFAA         9.74  0.6176  2.68 0.009435    0.0802 -2.799
+#Bacteroides_caccae                -3.97 10.6774 -2.60 0.011704    0.0918 -2.826
+
+#topTable Strain 
+#                                                                    P.Value adj.P.Val
+#Bacteroides_finegoldii_St_Bacteroides_finegoldii_unclassified       0.000881    0.0309
+#Bacteroides_faecis_St_GCF_000226135                                 0.001360    0.0309
+#Bacteroides_salyersiae_St_Bacteroides_salyersiae_unclassified       0.001193    0.0309
+#Bacteroides_clarus_St_GCF_000195615                                 0.000974    0.0309
+#Bacteroides_xylanisolvens_St_Bacteroides_xylanisolvens_unclassified 0.003386    0.0616
+#Ruminococcus_bromii_St_GCF_000209875                                0.005551    0.0722
+#Parabacteroides_johnsonii_St_Parabacteroides_johnsonii_unclassified 0.005123    0.0722
+#Bacteroides_caccae_St_Bacteroides_caccae_unclassified               0.010624    0.0958
+#Parasutterella_excrementihominis_St_GCF_000205025                   0.010555    0.0958
+#Roseburia_intestinalis_St_Roseburia_intestinalis_unclassified       0.012063    0.0958
+#Ruminococcus_sp_5_1_39BFAA_St_GCF_000159975                         0.010837    0.0958
+#Bacteroides_intestinalis_St_GCF_000172175                           0.013685    0.0958
+#Alistipes_shahii_St_GCF_000210575                                   0.012698    0.0958
+
+#topTable Genus 
+#                             logFC AveExpr     t  P.Value adj.P.Val      B
+#Bacteroides                  -1.96  17.652 -4.21 8.45e-05   0.00372  1.265
+#Ruminococcus                  3.96  12.984  3.96 1.98e-04   0.00436  0.498
+
+#topTable Family 
+#                        logFC AveExpr      t  P.Value adj.P.Val     B
+#Bacteroidaceae         -1.860   17.64 -4.183 9.01e-05   0.00216  1.20
+#Prevotellaceae          5.703   10.29  3.252 1.84e-03   0.02205 -1.51
+#Bifidobacteriaceae      3.210   12.38  2.713 8.56e-03   0.06851 -2.56
+
+#topTable Order 
+#                    logFC AveExpr      t P.Value adj.P.Val     B
+#Bifidobacteriales   3.517   12.37  3.207  0.0021    0.0252 -1.51
+#Bacteroidales      -1.237   19.03 -2.655  0.0100    0.0601 -3.54
+
+#topTable Phylum 
+#                 logFC AveExpr      t  P.Value adj.P.Val      B
+#Actinobacteria   2.620    14.2  3.903 0.000138   0.00069  0.753
+#Proteobacteria  -1.854    14.5 -2.833 0.005179   0.00863 -2.526
+#Bacteroidetes   -1.111    19.0 -2.980 0.003315   0.00829 -2.627
+```
+
+
+#Analysing species composition of differentially abundant orders and genus
+
+```{r SpeciesDAorders, echo=FALSE, fig.height=4, fig.width=8}
+Personal_colors <- c("#FF0000", "#FFAA00", "#FFDD00", "#72d813", "#154f0d", "#06993E", "#06D8C3", "#06B2D8", "#004ECC", "#0300cc", "#6200CC", "#8E00CC", "#C500CC", "#CC0073", "#CC002C", "#BA8857", "#A04620", "#F47A00", "#771155","#AA4488", "#CC99BB", "#114477", "#4477AA", "#77AADD", "#381C00", "#781156","#A51876","#D21E96","#E43FAD", "#117845","#18A55E","#1ED278","#3FE491","#6CEAAB")
+
+##Enterobacteriales order
+Enterobacteriales = subset_taxa(Vec2[[1]], Order=="Enterobacteriales")
+sample_data(Enterobacteriales)$T1Dstatus <- relevel(sample_data(Enterobacteriales)$T1Dstatus, ref="yes")
+p1 <- plot_bar(Enterobacteriales, "T1Dstatus", fill = "Species")
+P1 <- p1 + geom_bar(aes(color = Species), stat = "identity") + theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 14), axis.text.y = element_text(size = 18), axis.title.y = element_text(size = 18), legend.title = element_text(size = 18), legend.text = element_text(size = 18)) + scale_fill_manual(values = Personal_colors) + scale_color_manual(values=Personal_colors) + geom_vline(xintercept = 34.5, color="red", size=1) + theme(axis.title.x=element_blank(), axis.text.x=element_blank())+ labs(y="Relative Abundance")  
+print(P1)
+
+##Enterobacteriales order
+Enterobacteriales = subset_taxa(Vec2[[1]], Order=="Bifidobacteriales")
+sample_data(Enterobacteriales)$T1Dstatus <- relevel(sample_data(Enterobacteriales)$T1Dstatus, ref="yes")
+p1 <- plot_bar(Enterobacteriales, "T1Dstatus", fill = "Species")
+P1 <- p1 + geom_bar(aes(color = Species), stat = "identity") + theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 14), axis.text.y = element_text(size = 18), axis.title.y = element_text(size = 18), legend.title = element_text(size = 18), legend.text = element_text(size = 18)) + scale_fill_manual(values = Personal_colors) + scale_color_manual(values=Personal_colors) + geom_vline(xintercept = 34.5, color="red", size=1) + theme(axis.title.x=element_blank(), axis.text.x=element_blank())+ labs(y="Relative Abundance")  
+print(P1)
+
+
+##Prevotella genus
+Prevotella = subset_taxa(Vec2[[1]], Genus=="Prevotella")
+PrevotellaT <- subset_samples(Prevotella, T1Dstatus%in%c("yes"))
+p1 <- plot_bar(PrevotellaT, "T1Dstatus", fill = "Species")
+P1 <- p1 + geom_bar(aes(color = Species), stat = "identity") + theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 14), axis.text.y = element_text(size = 18), axis.title.y = element_text(size = 18), legend.title = element_text(size = 18), legend.text = element_text(size = 18)) + scale_fill_manual(values = Personal_colors) + scale_color_manual(values=Personal_colors) + geom_vline(xintercept = 34.5, color="red", size=1)  + labs(y="Relative Abundance")  
+print(P1)
+```
+
+##Are these species differentially abundant between women with and without T1D?
+
+For this analysis, the data was transformed to obtain a normal distribution before applying the lmer test. To check that the residuals of data were normal after transformation (i.e. log2), a shapiro.test of the residuals of the model with transformed data was applied for each bacterial cluster/trimester. If the value of the Shapiro-Wilk Test is greater than 0.05, the data is normal. If it is below 0.05, the data significantly deviate from a normal distribution. For all the data, Shapiro-Wilk tests were above 0.05 and data was also visualised with ggqqplot(resid(X)) and hist(log2(X + 0.01)) as exemplified but silenced in the code, before performing the lmer test. 
+
+For *B. adolescentis* and *Escherichia unclassified* both only in trimester 3 the data could not be transformed into a normal distribution.
+
+
+```{r LmerIndvOrdeSpecies, echo=FALSE, results='asis', fig.height=4, fig.width=5}
+##Bacterial grouping
+Ospecies <- list("Escherichia_coli", "Escherichia_unclassified", "Bifidobacterium_adolescentis", "Bifidobacterium_longum")
+Time <- c("T1", "T2", "T3")
+for(e in 1:4){
+  for(l in 1:3){
+cat('\n')
+cat('\n###', "DA analysis between women with and without T1D for species", Ospecies[[e]], "Trimester", Time[l], '\n')
+cat('\n')
+Mothers_OTU_AFilt1_Preg_T1 <- subset_samples(Vec2[[1]], TriCorr%in%Time[l])
+Mothers_OTU_AFilt1_Preg_T1 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T1)>0, Mothers_OTU_AFilt1_Preg_T1)
+Mothers_OTU_AFilt1_Preg_OS_T1 <- prune_taxa(Ospecies[[e]], Mothers_OTU_AFilt1_Preg_T1)
+TaxaT1 <- data.frame(otu_table(Mothers_OTU_AFilt1_Preg_OS_T1))
+if((l==3&e==1)|(l==1&e==2)){
+TaxaT1S <- as.numeric(log2(TaxaT1*1000+0.001))
+} else {
+TaxaT1S <- as.numeric(log2(TaxaT1*1000+0.01))
+}
+Metadata <- data.frame(sample_data(Mothers_OTU_AFilt1_Preg_OS_T1)[,c("motherid", "T1Dstatus", "HLA.6DRML", "Age_LMP", "BMI_conception", "SeqRun",  "Nulliparous")])
+if(l==2|l==3){
+OS_T1 <- lmer(TaxaT1S ~  (1 | SeqRun) + (1 | motherid)  + HLA.6DRML +  Nulliparous + Age_LMP + BMI_conception + T1Dstatus, data=Metadata, REML=F)
+} else {
+OS_T1 <- lmer(TaxaT1S ~  (1 | SeqRun)  + HLA.6DRML +  Nulliparous + Age_LMP + BMI_conception + T1Dstatus, data=Metadata, REML=F)
+}
+#hist(TaxaT1S)
+#ggqqplot(resid(OS_T1))
+#shapiro.test(resid(OS_T1))
+T1R <- summary(OS_T1)
+print(kable(T1R$coefficients) %>% kable_styling(bootstrap_options = "striped", full_width = F, position = "left")  %>% row_spec(which(T1R$coefficients[,5] <0.1), bold = T, color = "black", background = "lightgreen") %>%row_spec(which(T1R$coefficients[,5] <0.051), bold = T, color = "black", background = "yellow"))
+}
+
+Mothers_OTU_AFilt1_Preg_OS <- prune_taxa(Ospecies[[e]], Vec2[[1]])
+TaxaT <- data.frame(otu_table(Mothers_OTU_AFilt1_Preg_OS))
+TaxaTS <- data.frame(as.numeric(log2(TaxaT*1000+0.01)))
+Metadata <- data.frame(sample_data(Mothers_OTU_AFilt1_Preg_OS)[,c("T1Dstatus","TriCorr")])
+TablesB <- cbind(Metadata, TaxaTS)
+colnames(TablesB) <- c("T1Dstatus", "TriCorr", "Taxa")
+
+tgc <- summarySE(TablesB, measurevar="Taxa", groupvars=c("T1Dstatus","TriCorr"))
+pd <- position_dodge(0.1)
+
+p2 <- ggplot(tgc, aes(x=TriCorr, y=Taxa, colour=T1Dstatus, group=T1Dstatus))
+T1Dcol <- c("blue", "red")
+P2 <- p2 + geom_errorbar(aes(ymin=Taxa-se, ymax=Taxa+se), width=.1, position=pd) + geom_line(position=pd, size=1.5) + geom_point(position=pd, size=3, shape=21, fill="white") + labs(x = "Trimesters", y=paste("Rel. abundance (%)", Ospecies[[e]]))  + theme(axis.text.y =element_text(size=14)) + theme(legend.title = element_text(size=15, face="bold"))  + theme(legend.text = element_text(size = 15))  + scale_fill_manual(values=T1Dcol) + scale_color_manual(values=T1Dcol) + theme(legend.position='none')  + scale_y_continuous(labels = scales::number_format(accuracy = 0.01))
+plot(P2)
+}
+```
+
+#Functional analysis
+
+```{r Reset, echo=FALSE}
+pn=0
+tn=0
+RDA <- data.frame(Trimester=as.character(), Taxa=as.character(), TaxLevel=as.character(), LogFC=as.numeric(), P.Val=as.numeric(), adj.P.Val=as.numeric(),NT1DPrev=as.numeric(), T1DPrev=as.numeric(), MT1.no=as.numeric(), MT1.yes=as.numeric(), MT2.no=as.numeric(), MT2.yes=as.numeric(), MT3.no=as.numeric(), MT3.yes=as.numeric(), SET1.no=as.numeric(), SET1.yes=as.numeric(), SET2.no=as.numeric(), SET2.yes=as.numeric(), SET3.no=as.numeric(), SET3.yes=as.numeric(), stringsAsFactors=FALSE)
+QDA <- data.frame(Trimester=as.character(), Taxa=as.character(), TaxLevel=as.character(), LogFC=as.numeric(), P.Val=as.numeric(), adj.P.Val=as.numeric(),TPrev=as.numeric(), TSPrev=as.numeric(), MT1.no=as.numeric(), MT1.yes=as.numeric(), MT2.no=as.numeric(), MT2.yes=as.numeric(), MT3.no=as.numeric(), MT3.yes=as.numeric(), SET1.no=as.numeric(), SET1.yes=as.numeric(), SET2.no=as.numeric(), SET2.yes=as.numeric(), SET3.no=as.numeric(), SET3.yes=as.numeric(), stringsAsFactors=FALSE)
+```
+
+```{r Functions, echo=FALSE}
+Obj <- load("~/Documents/ENDIA Project/Data and analyses/ENDIA Projects analysis/ENDIA_Mothers/Manuscript/Manuscript_Pregnancy_Most_Current/Submission_2021/Code and datasets/Pathways_phyloseq_object.RData")
+PathwaysObj <- Mothers_OTU_AFilt1_Preg
+
+Obj <- load("~/Documents/ENDIA Project/Data and analyses/ENDIA Projects analysis/ENDIA_Mothers/Manuscript/Manuscript_Pregnancy_Most_Current/Submission_2021/Code and datasets/KEGG_Orthology_phyloseq_object.RData")
+KeggObj <- Mothers_OTU_AFilt1_Preg
+
+Obj <- load("~/Documents/ENDIA Project/Data and analyses/ENDIA Projects analysis/ENDIA_Mothers/Manuscript/Manuscript_Pregnancy_Most_Current/Submission_2021/Code and datasets/MetaCyc_reactions_phyloseq_object.RData")
+MetaCycObj <- Mothers_OTU_AFilt1_Preg
+
+#Mothers_OTU_AFilt1_Preg
+TLevel<-c("Pathways", "Kegg", "MetaCyc")
+
+Vec <- list("Pathways" = PathwaysObj, "Kegg" =KeggObj, "MetaCyc" = MetaCycObj)
+Vec3 <- list("Pathways" = PathwaysObj, "Kegg" =KeggObj, "MetaCyc" = MetaCycObj)
+
+
+for (i in 1:3) {
+Mothers_OTU_AFilt1_Preg <- Vec[[i]]
+
+#Making sure each factor has the correct class
+#This factor corresponds to extraction batch
+sample_data(Mothers_OTU_AFilt1_Preg)$SeqRun <- as.factor(sample_data(Mothers_OTU_AFilt1_Preg)$SeqRun)
+#This factor corresponds to gestational age (day into pregnancy in which the sample was taken)
+sample_data(Mothers_OTU_AFilt1_Preg)$Days <- as.integer(as.character(sample_data(Mothers_OTU_AFilt1_Preg)$Days))
+#This factor corresponds to conception age
+sample_data(Mothers_OTU_AFilt1_Preg)$Age_LMP <- as.numeric(as.character(sample_data(Mothers_OTU_AFilt1_Preg)$Age_LMP))
+#This factor corresponds to Body Mass Index at conception time
+sample_data(Mothers_OTU_AFilt1_Preg)$BMI_conception <- as.numeric(as.character(sample_data(Mothers_OTU_AFilt1_Preg)$BMI_conception))
+#This factor corresponds to Human leukocyte antigen (HLA) type of the women
+sample_data(Mothers_OTU_AFilt1_Preg)$HLA.6DRML <- as.factor(sample_data(Mothers_OTU_AFilt1_Preg)$HLA.6DRML)
+#This factor corresponds to parity (which refers to if the women already had children before the current pregnancy)
+sample_data(Mothers_OTU_AFilt1_Preg)$Nulliparous <- as.factor(sample_data(Mothers_OTU_AFilt1_Preg)$Nulliparous)
+#This factor corresponds to a unique identifier per person (i.e. if the woman contributed samples from different pregnancies, those samples belong to the same motherid)
+sample_data(Mothers_OTU_AFilt1_Preg)$motherid <- as.factor(sample_data(Mothers_OTU_AFilt1_Preg)$motherid)
+#This factor corresponds to T1D status
+sample_data(Mothers_OTU_AFilt1_Preg)$T1Dstatus <- as.factor(sample_data(Mothers_OTU_AFilt1_Preg)$T1Dstatus)
+#This factor corresponds to trimester
+sample_data(Mothers_OTU_AFilt1_Preg)$TriCorr <- as.factor(sample_data(Mothers_OTU_AFilt1_Preg)$TriCorr)
+
+#This factor corresponds to a composed factor of trimester and T1D status, which is used in the differential abundance analysis.
+sample_data(Mothers_OTU_AFilt1_Preg)$TriwT1D <- factor(paste(sample_data(Mothers_OTU_AFilt1_Preg)$TriCorr,sample_data(Mothers_OTU_AFilt1_Preg)$T1Dstatus,sep="."))
+
+Vec3[[i]] <- Mothers_OTU_AFilt1_Preg
+}
+```
+
+```{r DifferentialAbundanceFunctions, echo=FALSE}
+##Subset data for calculation of prevalence
+for(me in 1:3){
+Mothers_OTU_AFilt1_Preg <- Vec3[[me]]
+
+# Subset to have only mothers trimester 1
+Mothers_OTU_AFilt1_Preg_T1 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriCorr%in%c("T1"))
+Mothers_OTU_AFilt1_Preg_T1 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T1)>0, Mothers_OTU_AFilt1_Preg_T1)
+
+# Subset to have only mothers trimester 2
+Mothers_OTU_AFilt1_Preg_T2 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriCorr%in%c("T2"))
+Mothers_OTU_AFilt1_Preg_T2 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T2)>0, Mothers_OTU_AFilt1_Preg_T2)
+
+# Subset to have only mothers trimester 3 
+Mothers_OTU_AFilt1_Preg_T3 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriCorr%in%c("T3"))
+Mothers_OTU_AFilt1_Preg_T3 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T3)>0, Mothers_OTU_AFilt1_Preg_T3)
+
+# Subset for prevalence calculation
+Mothers_OTU_AFilt1_Preg_T1DT1T2 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriwT1D%in%c("T1.yes", "T2.yes"))
+Mothers_OTU_AFilt1_Preg_T1DT1T2 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T1DT1T2)>0, Mothers_OTU_AFilt1_Preg_T1DT1T2)
+
+Mothers_OTU_AFilt1_Preg_T1DT2T3 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriwT1D%in%c("T2.yes", "T3.yes"))
+Mothers_OTU_AFilt1_Preg_T1DT2T3 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T1DT2T3)>0, Mothers_OTU_AFilt1_Preg_T1DT2T3)
+
+Mothers_OTU_AFilt1_Preg_T1DT1T3 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriwT1D%in%c("T1.yes", "T3.yes"))
+Mothers_OTU_AFilt1_Preg_T1DT1T3 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T1DT1T3)>0, Mothers_OTU_AFilt1_Preg_T1DT1T3)
+
+Mothers_OTU_AFilt1_Preg_nonT1DT1T2 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriwT1D%in%c("T1.no", "T2.no"))
+Mothers_OTU_AFilt1_Preg_nonT1DT1T2 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_nonT1DT1T2)>0, Mothers_OTU_AFilt1_Preg_nonT1DT1T2)
+
+Mothers_OTU_AFilt1_Preg_nonT1DT2T3 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriwT1D%in%c("T2.no", "T3.no"))
+Mothers_OTU_AFilt1_Preg_nonT1DT2T3 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_nonT1DT2T3)>0, Mothers_OTU_AFilt1_Preg_nonT1DT2T3)
+
+Mothers_OTU_AFilt1_Preg_nonT1DT1T3 <- subset_samples(Mothers_OTU_AFilt1_Preg, TriwT1D%in%c("T1.no", "T3.no"))
+Mothers_OTU_AFilt1_Preg_nonT1DT1T3 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_nonT1DT1T3)>0, Mothers_OTU_AFilt1_Preg_nonT1DT1T3)
+
+##Linear model with limma
+
+#Multiply by the library size after quality filter for each sample before imputing into limma
+Counts <- as.data.frame(otu_table(Mothers_OTU_AFilt1_Preg))
+
+# Metadata (Perform a mean-correction of all the covariates and factors making sure all have the correct class)
+Meta_df <- as.data.frame(as.matrix(sample_data(Mothers_OTU_AFilt1_Preg)))
+#Processing batches
+Meta_df$SeqRun <- as.factor(Meta_df$SeqRun)
+contrasts(Meta_df$SeqRun) <- contr.sum(levels(Meta_df$SeqRun))
+#HLA type
+Meta_df$HLA.6DRML <- as.factor(Meta_df$HLA.6DRML)
+contrasts(Meta_df$HLA.6DRML) <- contr.sum(levels(Meta_df$HLA.6DRML))
+#Conception age
+Meta_df$Age_LMP <- as.numeric(as.character(Meta_df$Age_LMP))
+Meta_df$Age_LMP <- Meta_df$Age_LMP - mean(Meta_df$Age_LMP)
+#BMI
+Meta_df$BMI_conception <- as.numeric(as.character(Meta_df$BMI_conception))
+Meta_df$BMI_conception <- Meta_df$BMI_conception - mean(Meta_df$BMI_conception)
+#Parity
+Meta_df$Nulliparous <- factor(Meta_df$Nulliparous, levels=c(0,1), labels=c("No", "Yes"))
+contrasts(Meta_df$Nulliparous) <- contr.sum(levels(Meta_df$Nulliparous))
+
+#design
+design <- model.matrix(~0 + TriwT1D + SeqRun  + Nulliparous + Age_LMP + BMI_conception + HLA.6DRML, data=Meta_df)
+
+#Make DGEList and apply abundance filters
+dge <- DGEList(Counts, group= Meta_df$TriwT1D)
+#EdgeR filter
+keep <- filterByExpr(dge)
+dge <- dge[keep,,keep.lib.sizes=FALSE]
+#Abundance: Filter all Species les than 0.01% total abundance across all samples
+result.filter = low.count.removal(t(dge$counts), percent=0.01)
+Keep_OTUS <- names(result.filter$keep.otu)
+dge <- dge[Keep_OTUS,,keep.lib.sizes=FALSE]
+#Prevalence filter
+M <- dge$counts
+M[M>0] <-1
+keepP <- rowSums(M) > 33
+dge <- dge[keepP,,keep.lib.sizes=FALSE]
+#Calculate normalization factors to scale the raw library sizes
+dgeTMM <- edgeR::calcNormFactors(dge, method = "TMMwsp")
+#Using version 10 June 2020 of voomLmFit function from EdgeR. Block by motherid factor (i.e. Woman ID for samples from the same woman but different pregnancies)
+fit <- voomLmFit(dgeTMM, design = design , plot = FALSE, block= Meta_df$motherid, sample.weights=TRUE)
+
+#Define and create contrasts
+##Contrast nonT1D_vs_T1D is composed of the addition of all trimesters in T1D and divided by 3 (average) vs the same for nonT1D to answer if there are differences in general independent of Trimester. The other contrasts are T1, T2 and T3 for looking into differences between women with and without T1D within each trimester and differences between trimesters were assessed in general (e.g. T1_vs_T2) or within T1D status (e.g. for differences between T1 and T3 within women with T1D: T1DT1vsT3)
+cont <- makeContrasts(nonT1D_vs_T1D=(TriwT1DT1.no + TriwT1DT2.no + TriwT1DT3.no)/3 - (TriwT1DT1.yes + TriwT1DT2.yes + TriwT1DT3.yes)/3, T1= TriwT1DT1.no - TriwT1DT1.yes, T2= TriwT1DT2.no - TriwT1DT2.yes, T3= TriwT1DT3.no - TriwT1DT3.yes, T1_vs_T2=(TriwT1DT1.no + TriwT1DT1.yes)/2 - (TriwT1DT2.no + TriwT1DT2.yes)/2, T2_vs_T3=(TriwT1DT2.no + TriwT1DT2.yes)/2 - (TriwT1DT3.no + TriwT1DT3.yes)/2, T1_vs_T3=(TriwT1DT1.no + TriwT1DT1.yes)/2 - (TriwT1DT3.no + TriwT1DT3.yes)/2, T1DT1vsT2=TriwT1DT1.yes -TriwT1DT2.yes, T1DT2vsT3=TriwT1DT2.yes -TriwT1DT3.yes, T1DT1vsT3=TriwT1DT1.yes -TriwT1DT3.yes, noT1DT1vsT2=TriwT1DT1.no -TriwT1DT2.no, noT1DT2vsT3=TriwT1DT2.no -TriwT1DT3.no, noT1DT1vsT3=TriwT1DT1.no -TriwT1DT3.no, levels=design)
+
+#Fit data with contrasts
+fitc <- contrasts.fit(fit, contrasts = cont)
+fitc <- eBayes(fitc, robust=TRUE)
+DT<- decideTests(fitc)
+summary(DT)
+
+#Calculate mean and stadard errors for each unit of comparison for making the visualisation plots.
+Mean <- fit$coef[,1:6]
+SE <- fit$stdev.unscaled[,1:6] * sqrt(fitc$s2.post)
+
+###nonT1D_vs_T1D###
+#Obtain results for contrast
+tt_nonT1D_vs_T1D <- topTable(fitc, coef = "nonT1D_vs_T1D", n=Inf)
+#Filter to obtain only taxa with FDR (i.e. adjusted P-value < 0.1)
+DA_GG <- (row.names(tt_nonT1D_vs_T1D))[tt_nonT1D_vs_T1D$P.Value<0.05]
+RESlimma <- tt_nonT1D_vs_T1D
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg)
+x_PA <- as.data.frame(t(Counts))
+### Presence / absence
+x_PA[x_PA >0] <- 1
+###Prevalence 
+xFil_PA<-split(x_PA, sample_data(Mothers_OTU_AFilt1_Preg)$T1Dstatus)
+}
+TriNam <- "All"
+##Prevalence and LogFC filter
+####Counts###
+if(length(DA_GG)>0){
+if(length(DA_GG)>1){
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1,4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+rownames(TableCom) <- c(1:NU)
+colnames(TableCom) <- c("Classification",  "LogFC", "P.Val", "adj.P.Val", "Prev%",  "T1D:Prev%")
+#Filter to obtain only taxa that have prevalence >50% at least in one of the groups 
+TableCom2 <- filter(TableCom, `Prev%` >= !!47 | `T1D:Prev%` >= !!47)
+#Filter to obtain taxa with LogFC > 0.5 or < -0.5
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1,4:5)], round(x_PA_RelFil_Res,3))
+rownames(TableCom) <- c("non-T1D", "T1D")
+colnames(TableCom) <- c("Classification",  "LogFC", "P.Val", "adj.P.Val", "Prev%")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47 )
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+
+}
+} else {
+##print("No DA taxa found")  
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##Table with calculations
+
+####ErrorBarsSAll####
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+  
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+RDA[i+pn,"Trimester"] <- TriNam
+RDA[i+pn,"Taxa"] <- DA1
+RDA[i+pn, "TaxLevel"] <- TLevel[me]
+RDA[i+pn, 4:8] <- TA[DA1,c(2:6)]
+RDA[i+pn, 9:14] <- Mean[DA1,]
+RDA[i+pn, 15:20] <- SE[DA1,]
+}
+pn=pn+i
+i=0
+TA=0
+}
+
+##Differential abundance between women with and without T1D in Trimester 1
+tt_T1 <- topTable(fitc, coef = "T1", n=Inf)
+DA_GG <- (row.names(tt_T1))[tt_T1$P.Value<0.05]
+RESlimma <- tt_T1
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg)
+Dummy1 <- Mothers_OTU_AFilt1_Preg_T1
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy1))))
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy1)$T1Dstatus)
+}
+TriNam <- "T1"
+####Counts###
+if(length(DA_GG)>0){
+if(length(DA_GG)>1){
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1,4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+rownames(TableCom) <- c(1:NU)
+colnames(TableCom) <- c("Classification",  "LogFC", "P.Val", "adj.P.Val", "Prev%",  "T1D:Prev%")
+#Filter to obtain only taxa that have prevalence >50% at least in one of the groups 
+TableCom2 <- filter(TableCom, `Prev%` >= !!47 | `T1D:Prev%` >= !!47)
+#Filter to obtain taxa with LogFC > 0.5 or < -0.5
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1,4:5)], round(x_PA_RelFil_Res,3))
+rownames(TableCom) <- c("non-T1D", "T1D")
+colnames(TableCom) <- c("Classification",  "LogFC", "P.Val", "adj.P.Val", "Prev%")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47 )
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+
+}
+} else {
+##print("No DA taxa found")  
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##Table with calculations
+
+####ErrorBarsSAll####
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+  
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+RDA[i+pn,"Trimester"] <- TriNam
+RDA[i+pn,"Taxa"] <- DA1
+RDA[i+pn, "TaxLevel"] <- TLevel[me]
+RDA[i+pn, 4:8] <- TA[DA1,c(2:6)]
+RDA[i+pn, 9:14] <- Mean[DA1,]
+RDA[i+pn, 15:20] <- SE[DA1,]
+}
+pn=pn+i
+i=0
+TA=0
+}
+
+##Differential abundance between women with and without T1D in Trimester 2
+tt_T2 <- topTable(fitc, coef = "T2", n=Inf)
+DA_GG <- (row.names(tt_T2))[tt_T2$P.Value<0.05]
+RESlimma <- tt_T2
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg)
+Dummy1 <- Mothers_OTU_AFilt1_Preg_T2
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy1))))
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy1)$T1Dstatus)
+}
+TriNam <- "T2"
+####Counts###
+if(length(DA_GG)>0){
+if(length(DA_GG)>1){
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1,4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+rownames(TableCom) <- c(1:NU)
+colnames(TableCom) <- c("Classification",  "LogFC", "P.Val", "adj.P.Val", "Prev%",  "T1D:Prev%")
+#Filter to obtain only taxa that have prevalence >50% at least in one of the groups 
+TableCom2 <- filter(TableCom, `Prev%` >= !!47 | `T1D:Prev%` >= !!47)
+#Filter to obtain taxa with LogFC > 0.5 or < -0.5
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1,4:5)], round(x_PA_RelFil_Res,3))
+rownames(TableCom) <- c("non-T1D", "T1D")
+colnames(TableCom) <- c("Classification",  "LogFC", "P.Val", "adj.P.Val", "Prev%")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47 )
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+
+}
+} else {
+##print("No DA taxa found")  
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##Table with calculations
+
+####ErrorBarsSAll####
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+  
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+RDA[i+pn,"Trimester"] <- TriNam
+RDA[i+pn,"Taxa"] <- DA1
+RDA[i+pn, "TaxLevel"] <- TLevel[me]
+RDA[i+pn, 4:8] <- TA[DA1,c(2:6)]
+RDA[i+pn, 9:14] <- Mean[DA1,]
+RDA[i+pn, 15:20] <- SE[DA1,]
+}
+pn=pn+i
+i=0
+TA=0
+}
+
+##Differential abundance between women with and without T1D in Trimester 3
+
+tt_T3 <- topTable(fitc, coef = "T3", n=Inf)
+DA_GG <- (row.names(tt_T3))[tt_T3$P.Value<0.05]
+RESlimma <- tt_T3
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg)
+Dummy1 <- Mothers_OTU_AFilt1_Preg_T3
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy1))))
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy1)$T1Dstatus)
+}
+TriNam <- "T3"
+####Counts###
+if(length(DA_GG)>0){
+if(length(DA_GG)>1){
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1,4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+rownames(TableCom) <- c(1:NU)
+colnames(TableCom) <- c("Classification",  "LogFC", "P.Val", "adj.P.Val", "Prev%",  "T1D:Prev%")
+#Filter to obtain only taxa that have prevalence >50% at least in one of the groups 
+TableCom2 <- filter(TableCom, `Prev%` >= !!47 | `T1D:Prev%` >= !!47)
+#Filter to obtain taxa with LogFC > 0.5 or < -0.5
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1,4:5)], round(x_PA_RelFil_Res,3))
+rownames(TableCom) <- c("non-T1D", "T1D")
+colnames(TableCom) <- c("Classification",  "LogFC", "P.Val", "adj.P.Val", "Prev%")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47 )
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+
+}
+} else {
+##print("No DA taxa found")  
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##Table with calculations
+
+####ErrorBarsSAll####
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+  
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+RDA[i+pn,"Trimester"] <- TriNam
+RDA[i+pn,"Taxa"] <- DA1
+RDA[i+pn, "TaxLevel"] <- TLevel[me]
+RDA[i+pn, 4:8] <- TA[DA1,c(2:6)]
+RDA[i+pn, 9:14] <- Mean[DA1,]
+RDA[i+pn, 15:20] <- SE[DA1,]
+}
+pn=pn+i
+i=0
+TA=0
+}
+
+##Differential abundance between T1 and T2 in women with T1D
+
+tt_T1DT1_vs_T2 <- topTable(fitc, coef = "T1DT1vsT2", n=Inf)
+DA_GG <- (row.names(tt_T1DT1_vs_T2))[tt_T1DT1_vs_T2$P.Value<0.05]
+RESlimma <- tt_T1DT1_vs_T2
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg_T1DT1T2)
+Dummy2 <- Mothers_OTU_AFilt1_Preg_T1DT1T2
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy2))) )
+}
+TriNam <- "T12T1D"
+
+###CountsT1DTrimesters###
+
+if(length(DA_GG)>0){
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy2)$TriCorr)
+
+if(length(DA_GG)>1){
+## T1D vs nonT1D Average relative abundance (%)
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val", "TBPrev%", "TAPrev%")
+TableCom2 <- filter(TableCom, `TBPrev%` >= !!47 | `TAPrev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res,3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val","Prev%")
+rownames(TableCom) <- c("TB", "TA")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+}
+} else {
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##ErrorBarsT1DTrimesters##
+
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+QDA[i+tn,"Trimester"] <- TriNam
+QDA[i+tn,"Taxa"] <- DA1
+QDA[i+tn, "TaxLevel"] <- TLevel[me]
+QDA[i+tn, 4:8] <- TA[DA1,c(2:6)]
+QDA[i+tn, 9:14] <- Mean[DA1,]
+QDA[i+tn, 15:20] <- SE[DA1,]
+
+}
+tn=tn+i
+i=0
+TA=0
+}
+
+##Differential abundance between T2 and T3 in women with T1D
+
+tt_T1DT2_vs_T3 <- topTable(fitc, coef = "T1DT2vsT3", n=Inf)
+DA_GG <- (row.names(tt_T1DT2_vs_T3))[tt_T1DT2_vs_T3$P.Value<0.05]
+RESlimma <- tt_T1DT2_vs_T3 
+if(length(DA_GG)>0){
+DA_GG <- as.character(DA_GG)
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg_T1DT2T3)
+Dummy2 <- Mothers_OTU_AFilt1_Preg_T1DT2T3
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy2)))) 
+}
+TriNam <- "T23T1D"
+###CountsT1DTrimesters###
+
+if(length(DA_GG)>0){
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy2)$TriCorr)
+
+if(length(DA_GG)>1){
+## T1D vs nonT1D Average relative abundance (%)
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val", "TBPrev%", "TAPrev%")
+TableCom2 <- filter(TableCom, `TBPrev%` >= !!47 | `TAPrev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res,3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val","Prev%")
+rownames(TableCom) <- c("TB", "TA")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+}
+} else {
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##ErrorBarsT1DTrimesters##
+
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+QDA[i+tn,"Trimester"] <- TriNam
+QDA[i+tn,"Taxa"] <- DA1
+QDA[i+tn, "TaxLevel"] <- TLevel[me]
+QDA[i+tn, 4:8] <- TA[DA1,c(2:6)]
+QDA[i+tn, 9:14] <- Mean[DA1,]
+QDA[i+tn, 15:20] <- SE[DA1,]
+
+}
+tn=tn+i
+i=0
+TA=0
+}
+
+##Differential abundance between T1 and T3 in women with T1D
+
+tt_T1DT1_vs_T3 <- topTable(fitc, coef = "T1DT1vsT3", n=Inf)
+DA_GG <- (row.names(tt_T1DT1_vs_T3))[tt_T1DT1_vs_T3$P.Value<0.05]
+RESlimma <- tt_T1DT1_vs_T3 
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg_T1DT1T3)
+Dummy2 <- Mothers_OTU_AFilt1_Preg_T1DT1T3
+# Relative abundance counts
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy2)))) 
+}
+TriNam <- "T13T1D"
+###CountsT1DTrimesters###
+
+if(length(DA_GG)>0){
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy2)$TriCorr)
+
+if(length(DA_GG)>1){
+## T1D vs nonT1D Average relative abundance (%)
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val", "TBPrev%", "TAPrev%")
+TableCom2 <- filter(TableCom, `TBPrev%` >= !!47 | `TAPrev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res,3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val","Prev%")
+rownames(TableCom) <- c("TB", "TA")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+}
+} else {
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##ErrorBarsT1DTrimesters##
+
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+QDA[i+tn,"Trimester"] <- TriNam
+QDA[i+tn,"Taxa"] <- DA1
+QDA[i+tn, "TaxLevel"] <- TLevel[me]
+QDA[i+tn, 4:8] <- TA[DA1,c(2:6)]
+QDA[i+tn, 9:14] <- Mean[DA1,]
+QDA[i+tn, 15:20] <- SE[DA1,]
+
+}
+tn=tn+i
+i=0
+TA=0
+}
+
+##Differential abundance between T1 and T2 in women without T1D
+
+tt_nonT1DT1_vs_T2 <- topTable(fitc, coef = "noT1DT1vsT2", n=Inf)
+DA_GG <- (row.names(tt_nonT1DT1_vs_T2))[tt_nonT1DT1_vs_T2$P.Value<0.05]
+RESlimma <- tt_nonT1DT1_vs_T2 
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg_nonT1DT1T2)
+Dummy2 <- Mothers_OTU_AFilt1_Preg_nonT1DT1T2
+# Relative abundance counts
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy2))))
+}
+TriNam <- "T12NT1D"
+###CountsT1DTrimesters###
+
+if(length(DA_GG)>0){
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy2)$TriCorr)
+
+if(length(DA_GG)>1){
+## T1D vs nonT1D Average relative abundance (%)
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val", "TBPrev%", "TAPrev%")
+TableCom2 <- filter(TableCom, `TBPrev%` >= !!47 | `TAPrev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res,3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val","Prev%")
+rownames(TableCom) <- c("TB", "TA")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+}
+} else {
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##ErrorBarsT1DTrimesters##
+
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+QDA[i+tn,"Trimester"] <- TriNam
+QDA[i+tn,"Taxa"] <- DA1
+QDA[i+tn, "TaxLevel"] <- TLevel[me]
+QDA[i+tn, 4:8] <- TA[DA1,c(2:6)]
+QDA[i+tn, 9:14] <- Mean[DA1,]
+QDA[i+tn, 15:20] <- SE[DA1,]
+
+}
+tn=tn+i
+i=0
+TA=0
+}
+
+##Differential abundance between T2 and 3 in women without T1D
+
+tt_nonT1DT2_vs_T3 <- topTable(fitc, coef = "noT1DT2vsT3", n=Inf)
+DA_GG <- (row.names(tt_nonT1DT2_vs_T3))[tt_nonT1DT2_vs_T3$P.Value<0.05]
+RESlimma <- tt_nonT1DT2_vs_T3 
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg_nonT1DT2T3)
+Dummy2 <- Mothers_OTU_AFilt1_Preg_nonT1DT2T3
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy2))))
+}
+TriNam <- "T23NT1D"
+###CountsT1DTrimesters###
+
+if(length(DA_GG)>0){
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy2)$TriCorr)
+
+if(length(DA_GG)>1){
+## T1D vs nonT1D Average relative abundance (%)
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val", "TBPrev%", "TAPrev%")
+TableCom2 <- filter(TableCom, `TBPrev%` >= !!47 | `TAPrev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res,3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val","Prev%")
+rownames(TableCom) <- c("TB", "TA")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+}
+} else {
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##ErrorBarsT1DTrimesters##
+
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+QDA[i+tn,"Trimester"] <- TriNam
+QDA[i+tn,"Taxa"] <- DA1
+QDA[i+tn, "TaxLevel"] <- TLevel[me]
+QDA[i+tn, 4:8] <- TA[DA1,c(2:6)]
+QDA[i+tn, 9:14] <- Mean[DA1,]
+QDA[i+tn, 15:20] <- SE[DA1,]
+
+}
+tn=tn+i
+i=0
+TA=0
+}
+
+##Differential abundance between T1 and T3 in women without T1D
+
+tt_nonT1DT1_vs_T3 <- topTable(fitc, coef = "noT1DT1vsT3", n=Inf)
+DA_GG <- (row.names(tt_nonT1DT1_vs_T3))[tt_nonT1DT1_vs_T3$P.Value<0.05]
+RESlimma <- tt_nonT1DT1_vs_T3 
+if(length(DA_GG)>0){
+Mothers_OTU_AFilt1_Preg_DA_GG = prune_taxa(DA_GG, Mothers_OTU_AFilt1_Preg_nonT1DT1T3)
+Dummy2 <- Mothers_OTU_AFilt1_Preg_nonT1DT1T3
+x_PA <- as.data.frame(t(as.data.frame(otu_table(Dummy2))))
+}
+TriNam <- "T13NT1D"
+###CountsT1DTrimesters###
+
+if(length(DA_GG)>0){
+### Presence / absence
+x_PA[x_PA >0] <- 1
+### Proportion present 
+xFil_PA<-split(x_PA, sample_data(Dummy2)$TriCorr)
+
+if(length(DA_GG)>1){
+## T1D vs nonT1D Average relative abundance (%)
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){colMeans(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+NU <- nrow(NameD)
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res[,1],3), round(x_PA_RelFil_Res[,2],3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val", "TBPrev%", "TAPrev%")
+TableCom2 <- filter(TableCom, `TBPrev%` >= !!47 | `TAPrev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2 <- TableCom2[order(TableCom2$LogFC),]
+} else {
+x_PA_RelFil_Res <-sapply(xFil_PA, function(x){mean(x[, rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG))])*100})
+x_PA_RelFil_Res <- as.data.frame(x_PA_RelFil_Res)
+NameD <- as.data.frame(taxa_names(Mothers_OTU_AFilt1_Preg_DA_GG))
+
+TableCom <- cbind(NameD, RESlimma[rownames(otu_table(Mothers_OTU_AFilt1_Preg_DA_GG)),c(1, 4:5)], round(x_PA_RelFil_Res,3))
+colnames(TableCom) <- c("Classification", "LogFC", "P.Val", "adj.P.Val","Prev%")
+rownames(TableCom) <- c("TB", "TA")
+TableCom2 <- filter(TableCom, `Prev%` >= !!47)
+TableCom2 <- filter(TableCom2, LogFC >= !!0.5 | LogFC <= !!-0.5)
+TableCom2$`T1D:Prev%` <- TableCom2[2,5]
+TableCom2 <- TableCom2[1,]
+}
+} else {
+TableCom2 <- TableCom2[FALSE,]
+}
+
+##ErrorBarsT1DTrimesters##
+
+if(nrow(TableCom2)>0){
+   DA_GG <- as.character(TableCom2[,1])
+   TA <- TableCom2
+   rownames(TA) <- TA[,1]
+LT <- length(DA_GG)
+
+for (i in 1:LT) {
+DA1 <- as.character(DA_GG[i])
+QDA[i+tn,"Trimester"] <- TriNam
+QDA[i+tn,"Taxa"] <- DA1
+QDA[i+tn, "TaxLevel"] <- TLevel[me]
+QDA[i+tn, 4:8] <- TA[DA1,c(2:6)]
+QDA[i+tn, 9:14] <- Mean[DA1,]
+QDA[i+tn, 15:20] <- SE[DA1,]
+
+}
+tn=tn+i
+i=0
+TA=0
+}
+}
+```
+
+##DA Functions (T1D vs. non-T1D) statistics
+
+```{r PNF, echo=FALSE, fig.height=60, fig.width=15}
+RDAP <- RDA[,1:8]
+RDAPP <- subset(RDAP, adj.P.Val <= 0.05)
+RDAPP$P.Val <- round(RDAPP$P.Val, 5)
+RDAPP$adj.P.Val <- round(RDAPP$adj.P.Val, 3)
+kable(RDAPP) %>% kable_styling(bootstrap_options = "striped", full_width = F, position = "left") 
+
+RDA05 <- subset(RDA, adj.P.Val <= 0.05)
+RDAG <- RDA05[,c(2:3, 9:20)]
+RDAG <- distinct(RDAG)
+RDAG[,2] <- as.vector(rep("Function", nrow(RDAG)))
+RDAG <- RDAG[order(RDAG$Taxa),] 
+```
+
+##DA Functions (Trimesters) statistics
+
+```{r QNF, echo=FALSE, fig.height=60, fig.width=15}
+QDAP <- QDA[,1:8]
+QDAPP <- subset(QDAP, adj.P.Val <= 0.05)
+QDAPP$P.Val <- round(QDAPP$P.Val, 5)
+QDAPP$adj.P.Val <- round(QDAPP$adj.P.Val, 3)
+kable(QDAPP) %>% kable_styling(bootstrap_options = "striped", full_width = F, position = "left") 
+
+QDA05 <- subset(QDA, adj.P.Val <= 0.05)
+QDAG <- QDA05[,c(2:3, 9:20)]
+QDAG <- distinct(QDAG)
+QDAG[,2] <- as.vector(rep("Function", nrow(QDAG)))
+QDAG <- QDAG[order(QDAG$Taxa),] 
+```
+
+###DA Function (T1D vs. non-T1D) plots All
+
+```{r PrintDATaxRDAFNew, echo=FALSE, fig.height=8, fig.width=12}
+PlotJ = list()
+
+namesJ <- c("PWY-1269: CMP-3-deoxy-D-manno-octulosonate biosynthesis I", "PWY-5838: superpathway of menaquinol-8 biosynthesis I", "K06215", "COBALSYN-PWY: adenosylcobalamin salvage from cobinamide I", "K00074", "K01207")
+
+RDAG <- subset(RDAG, RDAG$Taxa %in% namesJ)
+rownames(RDAG) <- RDAG$Taxa 
+RDAG <- RDAG[namesJ,]
+namesJN <- c("LPS production", "Vitamin K2 synthesis", "Vitamin B6 synthesis", "Vitamin B12 synthesis", "SCFA production", "Mucin degradation")
+
+for(i in 1:nrow(RDAG)){
+X <- RDAG[i,]
+S <- data.frame(Taxa=as.character(), TaxLevel=as.character(), TriwT1D=as.character(),  Mean=as.numeric(), SE=as.numeric(), T1Dstatus=as.character(), Trimester=as.character(), stringsAsFactors=FALSE)
+S[1:6,1] <- X[1,1]
+S[1:6,2] <- X[1,2]
+S[1:6,3] <- colnames(X)[3:8]
+S[1:6,4] <- as.numeric(X[1,3:8])
+S[1:6,5] <- as.numeric(X[1,9:14])
+S[1:6,6] <- c("no", "yes", "no", "yes", "no", "yes")
+S[1:6,7] <- c("T1", "T1", "T2", "T2", "T3", "T3")
+
+pd <- position_dodge(0.1)
+p2 <- ggplot(S, aes(x=Trimester, y=Mean, colour=T1Dstatus, group=T1Dstatus))
+J <-  p2 + geom_errorbar(aes(ymin=Mean-SE, ymax=Mean+SE), width=.1, position=pd) + geom_line(position=pd, size=1.5) + geom_point(position=pd, size=3, shape=21, fill="white") + theme(axis.title.x = element_blank(), axis.title.y = element_blank()) + theme(axis.text.y =element_text(size=14), axis.text.x =element_blank()) + theme(legend.title = element_text(size=7, face="bold")) + scale_fill_manual(values=T1Dcol) + scale_color_manual(values=T1Dcol) + theme(legend.position='none')  + ggtitle(namesJN[i])  + theme(plot.title = element_text(size=12)) + scale_y_continuous(labels = scales::number_format(accuracy = 0.1))
+PlotJ[[i]] <- J
+}
+
+gP <- gridExtra::arrangeGrob(grobs = PlotJ, ncol=3)
+plot(gP)
+#ggsave(file="~/Documents/ENDIA Project/Data and analyses/ENDIA Projects analysis/ENDIA_Mothers/Manuscript/Manuscript_Pregnancy_Most_Current/Submission_Nov_2020/Supp figures/Figure_6.pdf", gP, width = 12, height = 6.5)
+```
+
+#Species contribution to selected differentially abundant functions
+##Selecting the species that contribute and are on average more abundant in one group 
+
+Bacterial species contributing to differentially abundant (DA) functions were plotted.Then, from the repertoire of bacteria that are contributing to the DA functions, we selected only the bacterial species which are on average more abundant in the group in which they are more abundant. However, given the size of the code, this analysis can be found in the separate markdown file "Metagenomics_Taxonomic_contribution_to_functions". We named this groups of contributing bacteria functional clusters.
+
+For this analysis, the data was transformed to obtain a normal distribution before applying the lmer test. To check that the residuals of data were normal after transformation (i.e. log2), a shapiro.test of the residuals of the model with transformed data was applied for each bacterial cluster/trimester. If the value of the Shapiro-Wilk Test is greater than 0.05, the data is normal. If it is below 0.05, the data significantly deviate from a normal distribution. For all the data, Shapiro-Wilk tests were above 0.05 and data was also visualised with ggqqplot(resid(X)) and hist(log2(X + 0.01)) as exemplified but silenced in the code, before performing the lmer test.
+
+Here, the bacterial LPS cluster and the LPS pathway that was DA between T1D and non-T1D women were correlated to the pathology markers as well.
+
+```{r LmerLPS, echo=FALSE, results ='asis', fig.height=4, fig.width=5}
+##Bacterial grouping
+LPS <- c("Escherichia_coli", "Akkermansia_muciniphila", "Bacteroides_caccae", "Alistipes_finegoldii", "Bacteroides_dorei", "Odoribacter_splanchnicus", "Alistipes_shahii", "Bacteroides_fragilis", "Bacteroides_vulgatus", "Bacteroides_faecis", "Bacteroides_finegoldii", "Bacteroides_ovatus", "Bacteroides_sp_2_1_22", "Bacteroides_sp_4_3_47FAA", "Bacteroides_thetaiotaomicron", "Bacteroides_xylanisolvens", "Alistipes_onderdonkii", "Bacteroides_stercoris", "Bacteroides_uniformis")
+
+SCFA <- c("Faecalibacterium_prausnitzii", "Ruminococcus_torques", "Eubacterium_rectale", "Roseburia_intestinalis", "Anaerostipes_hadrus", "Lachnospiraceae_bacterium_5_1_63FAA", "Roseburia_inulinivorans")
+
+K2 <- c("Escherichia_coli", "Akkermansia_muciniphila", "Bacteroides_sp_4_3_47FAA", "Bacteroides_dorei", "Bacteroides_fragilis", "Alistipes_finegoldii", "Bacteroides_vulgatus")
+
+B12 <- c("Eubacterium_rectale", "Faecalibacterium_prausnitzii", "Roseburia_intestinalis", "Desulfovibrio_piger", "Ruminococcus_torques")
+
+B6 <- c("Eubacterium_rectale", "Desulfovibrio_piger") 
+
+Mucin <- c("Eubacterium_rectale", "Bifidobacterium_adolescentis", "Eubacterium_siraeum", "Ruminococcus_bromii", "Adlercreutzia_equolifaciens", "Roseburia_intestinalis", "Bifidobacterium_bifidum", "Streptococcus_parasanguinis", "Megamonas_hypermegale")
+
+taxaC <- list("LPS cluster"=LPS, "SCFA cluster"=SCFA, "K2 cluster"= K2, "B12 cluster"= B12, "B6 cluster"= B6, "Mucin cluster"= Mucin)
+
+for(k in 1:6){
+cat('\n')
+cat('\n##', "DA analysis between women with and without T1D for", names(taxaC)[k], '\n')
+cat('\n')
+Mothers_OTU_AFilt1_Preg_T1 <- subset_samples(Vec2[[1]], TriCorr%in%c("T1"))
+Mothers_OTU_AFilt1_Preg_T1 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T1)>0, Mothers_OTU_AFilt1_Preg_T1)
+Mothers_OTU_AFilt1_Preg_taxaC_T1 <- prune_taxa(taxaC[[k]], Mothers_OTU_AFilt1_Preg_T1)
+TaxaT1 <- data.frame(otu_table(Mothers_OTU_AFilt1_Preg_taxaC_T1))
+TaxaT1S <- colSums(TaxaT1)
+Metadata <- data.frame(sample_data(Mothers_OTU_AFilt1_Preg_taxaC_T1)[,c("motherid", "T1Dstatus", "HLA.6DRML", "Age_LMP", "BMI_conception", "SeqRun",  "Nulliparous")])
+taxaC_T1 <- lmer(log2(TaxaT1S + 0.01) ~  (1 | SeqRun)  + HLA.6DRML +  Nulliparous + Age_LMP + BMI_conception + T1Dstatus, data=Metadata, REML=F)
+#ggqqplot(resid(taxaC_T1))
+#shapiro.test(resid(taxaC_T1))
+#hist(log2(TaxaT1S + 0.01))
+T1R <- summary(taxaC_T1)
+cat('\n###', "Trimester 1", '\n')
+cat('\n')
+print(kable(T1R$coefficients) %>% kable_styling(bootstrap_options = "striped", full_width = F, position = "left") %>%row_spec(which(T1R$coefficients[,5] <0.051), bold = T, color = "black", background = "yellow"))
+
+Mothers_OTU_AFilt1_Preg_T2 <- subset_samples(Vec2[[1]], TriCorr%in%c("T2"))
+Mothers_OTU_AFilt1_Preg_T2 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T2)>0, Mothers_OTU_AFilt1_Preg_T2)
+Mothers_OTU_AFilt1_Preg_taxaC_T2 <- prune_taxa(taxaC[[k]], Mothers_OTU_AFilt1_Preg_T2)
+TaxaT2 <- data.frame(otu_table(Mothers_OTU_AFilt1_Preg_taxaC_T2))
+TaxaT2S <- colSums(TaxaT2)
+Metadata <- data.frame(sample_data(Mothers_OTU_AFilt1_Preg_taxaC_T2)[,c("motherid", "T1Dstatus", "HLA.6DRML", "Age_LMP", "BMI_conception", "SeqRun",  "Nulliparous")])
+taxaC_T2 <- lmer(log2(TaxaT2S + 0.01) ~  (1 | SeqRun) + (1 | motherid)  + HLA.6DRML +  Nulliparous + Age_LMP + BMI_conception + T1Dstatus , data=Metadata, REML=F)
+#ggqqplot(resid(taxaC_T2))
+#shapiro.test(resid(taxaC_T2))
+#hist(log2(TaxaT2S + 0.01))
+T2R <- summary(taxaC_T2)
+
+cat('\n###', "Trimester 2", '\n')
+cat('\n')
+print(kable(T2R$coefficients) %>% kable_styling(bootstrap_options = "striped", full_width = F, position = "left") %>%row_spec(which(T2R$coefficients[,5] <0.051), bold = T, color = "black", background = "yellow"))
+
+Mothers_OTU_AFilt1_Preg_T3 <- subset_samples(Vec2[[1]], TriCorr%in%c("T3"))
+Mothers_OTU_AFilt1_Preg_T3 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T3)>0, Mothers_OTU_AFilt1_Preg_T3)
+Mothers_OTU_AFilt1_Preg_taxaC_T3 <- prune_taxa(taxaC[[k]], Mothers_OTU_AFilt1_Preg_T3)
+TaxaT3 <- data.frame(otu_table(Mothers_OTU_AFilt1_Preg_taxaC_T3))
+if(k==1){
+Mothers_OTU_AFilt1_Preg_taxaC_T3Corr <- Mothers_OTU_AFilt1_Preg_taxaC_T3
+}
+TaxaT3S <- colSums(TaxaT3)
+Metadata <- data.frame(sample_data(Mothers_OTU_AFilt1_Preg_taxaC_T3)[,c("motherid", "T1Dstatus", "HLA.6DRML", "Age_LMP", "BMI_conception", "SeqRun",  "Nulliparous")])
+if(k==1){
+taxaC_T3 <- lmer(log2(TaxaT3S + 1) ~ (1 | SeqRun) + (1 | motherid)  + HLA.6DRML +  Nulliparous + Age_LMP + BMI_conception + T1Dstatus, data=Metadata, REML=F)
+} else {
+taxaC_T3 <- lmer(log2(TaxaT3S + 0.01) ~ (1 | SeqRun) + (1 | motherid)  + HLA.6DRML +  Nulliparous + Age_LMP + BMI_conception + T1Dstatus, data=Metadata, REML=F)
+}
+#ggqqplot(resid(taxaC_T3))
+#shapiro.test(resid(taxaC_T3))
+#qqmath(taxaC_T3, id=0.05)
+#hist(log2(TaxaT3S + 1))
+T3R <- summary(taxaC_T3)
+
+cat('\n###', "Trimester 3", '\n')
+cat('\n')
+print(kable(T3R$coefficients) %>% kable_styling(bootstrap_options = "striped", full_width = F, position = "left") %>%row_spec(which(T3R$coefficients[,5] <0.051), bold = T, color = "black", background = "yellow"))
+
+#Plot across pregnancy
+Mothers_OTU_AFilt1_Preg_taxaC <- prune_taxa(taxaC[[k]], Vec2[[1]])
+Taxa <- data.frame(otu_table(Mothers_OTU_AFilt1_Preg_taxaC))
+TaxaS <- log2(colSums(Taxa) + 0.01)
+Metadata <- data.frame(sample_data(Mothers_OTU_AFilt1_Preg_taxaC)[,c("T1Dstatus","TriCorr")])
+TablesB <- cbind(Metadata, TaxaS)
+tgc <- summarySE(TablesB, measurevar="TaxaS", groupvars=c("T1Dstatus","TriCorr"))
+pd <- position_dodge(0.1)
+p2 <- ggplot(tgc, aes(x=TriCorr, y=TaxaS, colour=T1Dstatus, group=T1Dstatus))
+T1Dcol <- c("blue", "red")
+P2 <- p2 + geom_errorbar(aes(ymin=TaxaS-se, ymax=TaxaS+se), width=.1, position=pd) + geom_line(position=pd, size=1.5) + geom_point(position=pd, size=3, shape=21, fill="white")  + theme(axis.text.y =element_text(size=14), axis.text.x =element_blank()) + theme(legend.title = element_text(size=15, face="bold"))  + theme(legend.text = element_text(size = 15))  + scale_fill_manual(values=T1Dcol) + scale_color_manual(values=T1Dcol) + theme(legend.position='none')  + scale_y_continuous(labels = scales::number_format(accuracy = 0.01)) + labs(x ="Trimesters", y=paste("Rel. abundance (%)-", names(taxaC)[k]))
+print(P2)
+}
+```
+
+#Quantitative PCR to validate differentially abundant species
+
+## Testing for differences in qPCR relative abundance of DA taxa between women with and without T1D (metagenomics Trimester 3) 
+
+```{r qPCRdata, echo=FALSE, fig.height=4, fig.width=5}
+library(readr)
+data <- read_csv("~/Documents/ENDIA Project/Data and analyses/ENDIA Projects analysis/ENDIA_Mothers/Manuscript/Manuscript_Pregnancy_Most_Current/Submission_2021/qPCR/qPCR_data.csv")
+data$motherid <- as.factor(data$motherid)
+
+#B. vulgatus
+## Building the model
+m_vul_1 <- lmer(log10(DDCT_Vulgatus*1000+0.01) ~  HLA_6DRML +  (1 | motherid) + as.factor(Nulliparous) + Age_LMP + BMI_conception + (1 |Extrac_batch) + T1Dstatus, data= data[data$T1Dstatus!="GDM",],REML=F)
+## Checking distribution of the residuals
+#ggqqplot(resid(m_vul_1))
+#shapiro.test(resid(m_vul_1))
+# --> Residuals are normally distributed 
+## Checking the outcome of the model
+summary(m_vul_1)
+# --> The relative abundance of B. vulgatus is associated with T1D
+## Plot qPCR abundance
+T1D_cat <- as.factor(data[data$T1Dstatus!="GDM",]$T1Dstatus)
+T1D_catdf <- data.frame(T1D_cat)
+Datadd <- data.frame(predict(m_vul_1))
+DataB <- cbind(Datadd, T1D_catdf)
+T1Dcol <- c("red", "blue")
+T1D_cat <- relevel(T1D_cat, ref="yes")
+DataB$T1D_cat <- relevel(DataB$T1D_cat, ref="yes")
+ggplot(DataB, aes(x=T1D_cat, y=predict.m_vul_1., color=T1D_cat)) + geom_boxplot(size=1) + geom_point(color="black")  +labs(title= "Bacteroides vulgatus",x="T1D status", y = "Adjusted values") + theme(legend.position='none')  + scale_fill_manual(values=T1Dcol) + scale_color_manual(values=T1Dcol)  + theme(axis.title.x = element_blank(), axis.title.y = element_text(size=14)) + theme(axis.text.y =element_text(size=14), axis.text.x =element_blank())
+
+#B. caccae
+## Building the model
+m_Caccae_1<- lmer(log10(DDCT_Caccae*1000+ 0.1) ~  (1 | motherid) + HLA_6DRML +  as.factor(Nulliparous) + Age_LMP + BMI_conception + as.factor(Extrac_batch) + T1Dstatus, data= data[data$T1Dstatus!="GDM",], REML=F)
+## Checking distribution of the residuals
+#ggqqplot(resid(m_Caccae_1))
+#shapiro.test(resid(m_Caccae_1))
+# --> Residuals are normally distributed 
+## Checking the outcome of the model
+summary(m_Caccae_1)
+# --> The relative abundance of B. caccae is associated with T1D
+Datadd <- data.frame(predict(m_Caccae_1))
+DataB <- cbind(Datadd, T1D_catdf)
+DataB <- cbind(Datadd, T1D_catdf)
+DataB$T1D_cat <- relevel(DataB$T1D_cat, ref="yes")
+ggplot(DataB, aes(x=T1D_cat, y=predict.m_Caccae_1., color=T1D_cat)) + geom_boxplot(size=1) + geom_point(color="black")  +labs(title= "Bacteroides caccae",x="T1D status", y = "Adjusted values") + scale_fill_manual(values=T1Dcol) + scale_color_manual(values=T1Dcol)  + theme(axis.title.x = element_blank(), axis.title.y = element_text(size=14)) + theme(axis.text.y =element_text(size=14), axis.text.x =element_blank()) + theme(legend.position='none')
+```
+
+## Correlation between relative abundances obtained by metagenomics sequencing and qPCR assays
+
+```{r qPCR, echo=FALSE}
+qPCR <- read.table(file="~/Documents/ENDIA Project/Data and analyses/ENDIA Projects analysis/ENDIA_Mothers/Manuscript/Manuscript_Pregnancy_Most_Current/Submission_2021/qPCR/qPCR_data.csv", header=TRUE, row.names=1, sep=",")
+qPCR <- qPCR[,4:5]
+```
+
+```{r qPCRmeta, echo=FALSE}
+Mothers_OTU_AFilt1_Preg_T3 <- subset_samples(Vec2[[1]], TriCorr%in%c("T3"))
+Mothers_OTU_AFilt1_Preg_T3 <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T3)>0, Mothers_OTU_AFilt1_Preg_T3)
+
+Dummy <- Mothers_OTU_AFilt1_Preg_T3
+Keep_OTUS <- c("Bacteroides_vulgatus", "Bacteroides_caccae")
+Dummy <- prune_taxa(Keep_OTUS, Dummy)
+sample_names(Dummy) <- sample_data(Dummy)$sample_id
+
+X1 <- rownames(qPCR)
+MicroT3P = prune_samples(as.character(X1), Dummy)
+
+XMy <- sort(sample_names(MicroT3P))
+qPCRF <- subset(qPCR, rownames(qPCR) %in% XMy)
+colnames(qPCRF) <- c("Bacteroides_vulgatusqPCR", "Bacteroides_caccaeqPCR")
+
+micro <- t(otu_table(MicroT3P))
+micro<- micro[ order(row.names(micro)),]
+micro <- as.data.frame(micro)
+micro.m <- as.matrix(micro)
+micro.m.NA <- micro.m
+#micro.m.NA[micro.m.NA == 0] <- NA
+
+qPCRFo <- qPCRF
+qPCRFo<- qPCRFo[ order(row.names(qPCRFo)),]
+qPCRFo.m <- as.matrix(qPCRFo)
+
+corr <- rcorr(micro.m.NA, qPCRFo.m, type = "spearman")
+```
+
+```{r Solution2, echo=FALSE, fig.height=4, fig.width=5}
+# Filtering
+corr.filt <- corr
+
+# Chage from matrix to table format
+columns = rep(colnames(corr.filt$r),each = nrow(corr.filt$r))
+rows = rep(rownames(corr.filt$r),ncol(corr.filt$r))
+corr.filt.flat <- cbind(columns,rows,r=as.numeric(corr.filt$r), n=as.numeric(corr.filt$n), P=as.numeric(corr.filt$P))
+corr.filt.flat2 <- data.frame(corr.filt.flat, stringsAsFactors = FALSE)
+corr.filt.flat2$r <- as.numeric(corr.filt.flat2$r)
+corr.filt.flat2$n <- as.numeric(corr.filt.flat2$n)
+corr.filt.flat2$P <- as.numeric(corr.filt.flat2$P)
+j <- nrow(corr.filt.flat2)
+corr.filt.flat2$adjP <- p.adjust(corr.filt.flat2$P,method="BH", n =j - 1 )
+#Keep comparison between microbiome and qPCR abundances only
+corr.filt.flat2 <- corr.filt.flat2[c(4,7),]
+colnames(corr.filt.flat2) <- c("Microbiome", "qPCR", "R", "n", "P-value", "adj-P")
+kable(corr.filt.flat2 %>%  mutate_if(is.numeric, format, digits=4)) %>% kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+```
+
+#Markers of gut pathology and vitamin B6 and B12 measurements
+
+## Testing for differences in iFABP levels between women with and without T1D (metagenomics Trimester 3) 
+
+Serum intestinal fatty acid-binding protein (iFABP) was measured in 27 and 28 pregnancies in women with and without T1D respectively (Avg. T1D= 585.88 and non-T1D= 314.1)
+
+The data doesn't distribute normally, so I can not use lmer. I tried transforming the data but I never get a normal distribution. So differences between T1D and non-T1Dwere tested only using a Mann-Whitney test using one of the repeated measurements per woman (i.e. if a specific woman has 2 samples from the same trimester either from the same or different pregnancies, one of them was removed). 
+
+The comparison using Mann-Whitney non-paramethis test was performed with:
+
+T1D samples: 26
+
+Non-T1D samples: 26
+
+```{r iFABP, echo=FALSE, fig.height=4, fig.width=5}
+IFABPT3p <- read.table(file="/Users/schulze.a/Documents/ENDIA Project/Data and analyses/ENDIA Projects analysis/ENDIA_Mothers/Manuscript/Manuscript_Pregnancy_Most_Current/Submission_2021/iFABP_measurements.csv", header=TRUE, row.names=1, sep="\t")
+
+#IFABPT3p$iFABP <- as.numeric(IFABPT3p$iFABP )
+#res3p <- wilcox.test(IFABPT3p[c(1:28),1], IFABPT3p[c(29:55),1])
+#res3p
+
+#data:  IFABPT3p[c(1:28), 1] and IFABPT3p[c(29:55), 1]
+#W = 154.5, p-value = 0.0001732
+#alternative hypothesis: true location shift is not equal to 0
+
+##Removing repeated measurements (samples from different pregnancies in T3) from 3 women
+IFABPT3p$iFABP <- as.numeric(IFABPT3p$iFABP )
+res3p <- wilcox.test(IFABPT3p[c(1:26),1], IFABPT3p[c(29:55),1])
+res3p
+
+#data:  IFABPT3p[c(1:28), 1] and IFABPT3p[c(29:55), 1]
+#W = 145.5, p-value = 0.000264
+
+#Calculate mean and standard deviation
+IFABPmeanT1D <- mean(IFABPT3p[c(29:55),1])
+IFABPsdT1D <- sd(IFABPT3p[c(29:55),1])
+
+IFABPmeanNT1D <- mean(IFABPT3p[c(1:26),1])
+IFABPsdNT1D <- sd(IFABPT3p[c(1:26),1])
+
+
+##Using lmer (however if the unit used is the pregnancy, it might not be a problem?)
+#IFABPT3p$T1D.status <- as.factor(IFABPT3p$T1D.status)
+#IFABPT3p$motherid <- as.factor(IFABPT3p$motherid)
+
+#l <- lmer(sqrt(sqrt(iFABP)) ~  T1D.status + (1 | motherid), data=IFABPT3p, REML=F)
+#summary(l)
+#hist(sqrt(sqrt(IFABPT3p$iFABP)))
+#ggqqplot(resid(l))
+#shapiro.test(resid(l))
+
+
+#Fixed effects:
+#              Estimate Std. Error     df t value Pr(>|t|)    
+#(Intercept)     313.58      40.78  52.99   7.689 3.52e-10 ***
+#T1D.statusyes   273.31      57.14  52.99   4.783 1.42e-05 ***
+
+##Plot
+T1Dcol <- c("red", "blue")
+IFABPT3pFi <- IFABPT3p[c(1:26,29:55),]
+IFABPT3pFi$T1D.status <- as.factor(IFABPT3pFi$T1D.status)
+IFABPT3pFi$T1D.status <- relevel(IFABPT3pFi$T1D.status, ref="yes")
+ggplot(IFABPT3pFi, aes(x=T1D.status, y=iFABP, color=T1D.status)) + geom_boxplot(size=1) + geom_point(color="black")  +labs(x="T1D status", y = "I-FABP (pg/ml)") + theme(legend.position='none')  + scale_fill_manual(values=T1Dcol) + scale_color_manual(values=T1Dcol)  + theme(axis.title.x = element_blank(), axis.title.y = element_text(size=14)) + theme(axis.text.y=element_text(size=14), axis.text.x =element_blank())
+
+```
+
+## Testing for differences in Calprotectin levels between women with and without T1D (metagenomics Trimester 3) 
+
+Calprotectin was measured in 32 and 29 pregnancies in women with and without T1D respectively (Avg. T1D= 112 and non-T1D= 36.1)
+
+When doing log2 transformation of the data, the distribution is closer to the normal and I can use lmer as well. Differences between T1D and non-T1D were also tested using a Mann-Whitney test with one of the repeated measurements per woman (i.e. if a specific woman has 2 samples from the same trimester either from the same or different pregnancy, one of them was removed). 
+
+The comparison was performed with:
+
+T1D samples: 31
+
+Non-T1D samples: 26
+
+```{r Calprotectin, echo=FALSE, fig.height=4, fig.width=5}
+CalT3p <- read.table(file="/Users/schulze.a/Documents/ENDIA Project/Data and analyses/ENDIA Projects analysis/ENDIA_Mothers/Manuscript/Manuscript_Pregnancy_Most_Current/Submission_2021/Calprotectin_measurements.csv", header=TRUE, row.names=1, sep="\t")
+
+#CalT3p$Calprotectin <- as.numeric(CalT3p$Calprotectin )
+#res3p <- wilcox.test(CalT3p[c(1:29),1], CalT3p[c(30:61),1])
+#res3p
+
+#data:  CalT3p[c(1:29), 1] and CalT3p[c(30:61), 1]
+#W = 319.5, p-value = 0.03739
+
+##Removing repeated measurements (samples from different pregnancies in T3) from 3 women
+CalT3p$Calprotectin <- as.numeric(CalT3p$Calprotectin )
+res3p <- wilcox.test(CalT3p[c(1:26),1], CalT3p[c(30:61),1])
+res3p
+
+#data:  CalT3p[c(1:29), 1] and CalT3p[c(30:61), 1]
+#W = 284, p-value = 0.0396
+
+#Calculate mean and standard deviation
+CalmeanT1D <- mean(CalT3p[c(30:61),1])
+CalsdT1D <- sd(CalT3p[c(30:61),1])
+
+CalmeanNT1D <- mean(CalT3p[c(1:26),1])
+CalsdNT1D <- sd(CalT3p[c(1:26),1])
+
+
+##Using lmer (however if the unit used is the pregnancy, it might not be a problem?)
+CalT3p$T1Dstatus <- as.factor(CalT3p$T1Dstatus)
+CalT3p$motherid <- as.factor(CalT3p$motherid)
+#hist(CalT3p$Calprotectin)
+l <- lmer(log2(Calprotectin) ~  T1Dstatus + (1 | motherid), data=CalT3p, REML=F)
+summary(l)
+#ggqqplot(resid(l))
+#shapiro.test(resid(l))
+
+#Fixed effects:
+#             Estimate Std. Error     df t value Pr(>|t|)    
+#(Intercept)     4.671      0.311 56.673   15.01   <2e-16 ***
+#T1Dstatusyes    1.057      0.420 57.649    2.51    0.015 *  
+
+#plot
+CalT3pFi <- CalT3p[c(1:26, 30:61),]
+T1Dcol <- c("red", "blue")
+CalT3pFi$T1Dstatus <- as.factor(CalT3pFi$T1Dstatus)
+CalT3pFi$T1Dstatus <- relevel(CalT3pFi$T1Dstatus, ref="yes")
+ggplot(CalT3pFi, aes(x=T1Dstatus, y=Calprotectin, color=T1Dstatus)) + geom_boxplot(size=1) + geom_point(color="black")  +labs(x="T1D status", y = "Calprotectin  (mg/kg)") + theme(legend.position='none')  + scale_fill_manual(values=T1Dcol) + scale_color_manual(values=T1Dcol)  + theme(axis.title.x = element_blank(), axis.title.y = element_text(size=14)) + theme(axis.text.y=element_text(size=14), axis.text.x =element_blank())
+```
+
+#Correlations between gut microbiome, markers of gut pathology(T3)
+
+This analysis was done only on samples from trimester 3 and removing repeated measurements in the same way that was done when applying a Mann-Whitney test to see differences between T1D and non-T1D women in pathology markers because when applying spearman correlation there is no way to take into account repeated measurements.
+
+All correlations with unadjusted P-values < 0.05 are shown. Also R2 of correlating marker of pathology vs differentially abundant taxa are shown regardless of being strong correlations and/or significant. 
+
+```{r CalS, echo=FALSE, results='asis', fig.height=4, fig.width=5}
+corr.filt.flat.filt2  <- data.frame(columns=character(), rows=character(), r=numeric(), n=numeric(), p=numeric(), stringsAsFactors=FALSE) 
+CalT3pFi <- CalT3p[c(1:26, 30:61),]
+IFABPT3pFi <- IFABPT3p[c(1:26,29:55),]
+M <- list("Calprotectin"= CalT3pFi, "iFABP"= IFABPT3pFi)
+Labelp <- c("Calprotectin", "iFABP")
+#Test species that were differentially abundant or that are the most abundant within an order/genus that was DA
+DASpecies <- c("Bacteroides_vulgatus", "Bacteroides_caccae", "Bacteroides_uniformis", "Bacteroidales_bacterium_ph8", "Escherichia_coli", "Prevotella_copri")
+TaxLev <- c("Species", "Strain", "Genus", "Family", "Order", "Phylum")
+
+for(f in 1:6){
+#cat('\n##', "Correlations at", TaxLev[f], "taxonomic level", '\n')
+cat('\n')
+for(e in 1:2){
+cat('\n')
+#cat('\n###', "Correlations between", TaxLev[f], "and", names(M)[e], '\n')
+cat('\n')
+if(f==1 | f==5){
+if(f==1) {
+Names <- c("Escherichia_coli", "Bacteroides_vulgatus", "Bacteroides_caccae", "Bacteroides_uniformis", "Bacteroidales_bacterium_ph8", "Bifidobacterium_adolescentis")
+}
+if(f==6){
+Names <- c("Bifidobacteriales", "Enterobacteriales")
+}
+Mothers_OTU_AFilt1_Preg_T3 <- subset_samples(Vec2[[f]], TriCorr%in%c("T3"))
+Dummy <- prune_taxa(taxa_sums(Mothers_OTU_AFilt1_Preg_T3)>0, Mothers_OTU_AFilt1_Preg_T3)
+##Filter Species with abundance < 0.01% accross al samples
+Dummy_df <- as.data.frame(otu_table(Dummy))
+result.filter = low.count.removal(t(Dummy_df), percent=0.01)
+length(result.filter$keep.otu) 
+Keep_OTUS <- names(result.filter$keep.otu)
+Dummy <- prune_taxa(Keep_OTUS, Dummy)
+
+sample_names(Dummy) <- sample_data(Dummy)$sample_id
+X1 <- rownames(M[[e]])
+MicroT3P = prune_samples(as.character(X1), Dummy)
+
+XMy <- sort(sample_names(MicroT3P))
+MF <- subset(M[[e]], rownames(M[[e]]) %in% XMy)
+
+micro <- t(otu_table(MicroT3P))
+micro<- micro[ order(row.names(micro)),]
+micro <- as.data.frame(micro)
+micro <- t(subset(t(micro), rownames(t(micro))%in%Names))
+micro.m <- as.matrix(micro)
+micro.m.NA <- micro.m
+micro.m.NA[micro.m.NA == 0] <- NA
+
+MF$RN <- rownames(MF)
+MFo<- MF[ order(row.names(MF)),]
+rownames(MFo) <- MFo$RN
+MFoP <- MFo
+MFo <- data.frame(MFo[,c(1)])
+MFo.m <- as.matrix(MFo)
+
+corr <- rcorr(micro.m.NA, as.numeric(MFo.m[,1]), type = "spearman")
+
+###### THE SOLUTION #########
+
+# Filtering
+corr.filt <- corr
+
+# Chage from matrix to table format
+columns = rep(colnames(corr.filt$r),each = nrow(corr.filt$r))
+rows = rep(rownames(corr.filt$r),ncol(corr.filt$r))
+corr.filt.flat <- cbind(columns,rows,r=as.numeric(corr.filt$r), n=as.numeric(corr.filt$n), P=as.numeric(corr.filt$P))
+corr.filt.flat2 <- data.frame(corr.filt.flat, stringsAsFactors = FALSE)
+corr.filt.flat2$r <- as.numeric(corr.filt.flat2$r)
+corr.filt.flat2$n <- as.numeric(corr.filt.flat2$n)
+corr.filt.flat2$P <- as.numeric(corr.filt.flat2$P)
+corr.filt.flat2 <- corr.filt.flat2[corr.filt.flat2$columns!=corr.filt.flat2$rows,]
+c3 <- data.frame(t(apply(corr.filt.flat2[,c("columns", "rows")], 1, function(x) sort(x))))
+corr.filt.flat2[,c("columns", "rows")] <- c3
+corr.filt.flat3 <-  corr.filt.flat2[!duplicated(corr.filt.flat2), ]
+corr.filt.flat4 <- rbind(subset(corr.filt.flat3, corr.filt.flat3$rows %in% "y"), subset(corr.filt.flat3, corr.filt.flat3$columns %in% "y"))
+
+#Filter by R2, adj P value and n (number of samples corrrelated)
+#corr.filt.flat.filt <- subset(corr.filt.flat4, n > 15 & P<0.05 & (r >0.20 | r < -0.20))
+if(nrow(corr.filt.flat4)>1){
+corr.filt.flat.filt <-  corr.filt.flat4
+corr.filt.flat.filt$rows <- names(M)[e]
+#Extracting Species that were differentially abundant (or that were contributing the most to the DA orders) to check if they are correlated with any measurements
+#corr.filt.flat.filt2 <- rbind(corr.filt.flat.filt, corr.filt.flat.filt2)
+print(kable(corr.filt.flat.filt) %>% kable_styling(bootstrap_options = "striped", full_width = F, position = "left")) 
+
+}
+}
+}
+}
+```
+
+#Correlations of ifferentially abundant taxa vs. all other bacteria in the microbiome
+
+```{r AllCorr, echo=FALSE, results ='asis'}
+c=1
+i=1
+Time <- list(c("T1", "T2", "T3"), "T3")
+
+#Filter by prevalence
+Micro <- Vec2[[i]]
+#Subset none or trimester 3
+MicroX <- subset_samples(Micro, TriCorr%in%c("T3"))
+
+Dummy_df <- as.data.frame(otu_table(MicroX))
+result.filter = low.count.removal(t(Dummy_df), percent=0.01)
+length(result.filter$keep.otu) 
+Keep_OTUS <- names(result.filter$keep.otu)
+MicroXF <- prune_taxa(Keep_OTUS, MicroX)
+sample_names(MicroXF) <- sample_data(MicroXF)$sample_id
+#List <- c("4576_1_T3", "5468_1_T3", "6512_1_T2", "9557_1_T3")
+#ListN <- sample_names(MicroXF)[!(sample_names(MicroXF) %in% List)]
+#MicroXF <- subset_samples(MicroXF, sample_names(MicroXF)%in%ListN)
+
+microT1D <- data.frame(sample_data(MicroXF)[,c("T1Dstatus", "TriCorr")])
+micro <- t(otu_table(MicroXF))
+micro<- micro[ order(row.names(micro)),]
+microT1D<- microT1D[ order(row.names(microT1D)),]
+micro <- as.data.frame(micro)
+micro.m <- as.matrix(micro)
+micro.m.NA <- micro.m
+micro.m.NA[micro.m.NA == 0] <- NA
+
+Microorganisms <- micro.m.NA
+
+corr <- rcorr(Microorganisms, type = "spearman")
+
+# Filtering
+corr.filt <- corr
+# Chage from matrix to table format
+columns = rep(colnames(corr.filt$r),each = nrow(corr.filt$r))
+rows = rep(rownames(corr.filt$r),ncol(corr.filt$r))
+corr.filt.flat <- cbind(columns,rows,r=as.numeric(corr.filt$r), n=as.numeric(corr.filt$n), P=as.numeric(corr.filt$P))
+corr.filt.flat2 <- data.frame(corr.filt.flat, stringsAsFactors = FALSE)
+corr.filt.flat2$r <- as.numeric(corr.filt.flat2$r)
+corr.filt.flat2$n <- as.numeric(corr.filt.flat2$n)
+corr.filt.flat2$P <- as.numeric(corr.filt.flat2$P)
+corr.filt.flat2 <- corr.filt.flat2[corr.filt.flat2$columns!=corr.filt.flat2$rows,]
+c3 <- data.frame(t(apply(corr.filt.flat2[,c("columns", "rows")], 1, function(x) sort(x))))
+corr.filt.flat2[,c("columns", "rows")] <- c3
+corr.filt.flat3 <-  corr.filt.flat2[!duplicated(corr.filt.flat2), ]
+
+#Bacteria
+zy <- nrow(corr.filt.flat3)
+O <- p.adjust(corr.filt.flat3$P,method="BH", n = zy)
+O[is.na(O)] <- 1
+Y2 <- corr.filt.flat3
+Y2$"Padj"  <-  O
+Y3 <- subset(Y2, n > 15 & Padj<0.1 & (r >0.25 | r < -(0.25)))
+
+#write.table(Y3, file = "/Users/schulze.a/Desktop/Measurements/MicrobiomeAllvsAllCorrelationsT3bacteriaVSbacteria.csv", quote = FALSE, sep = "\t", row.names = TRUE)
+###Only bacteria of interest vs. markers
+Names <- c("Escherichia_coli", "Bacteroides_vulgatus", "Bacteroides_caccae", "Bacteroides_uniformis", "Bacteroidales_bacterium_ph8", "Bifidobacterium_adolescentis")
+
+X1 <- subset(Y3, columns%in%Names)
+X2 <- subset(Y3, rows%in%Names)
+
+Results <- rbind(X1, X2)
+print(kable(Results) %>% kable_styling(bootstrap_options = "striped", full_width = F, position = "left"))
+
+
+```
