@@ -1,49 +1,34 @@
 # RothSchulze_pregnancy-gut-microbiome-T1D
 
-The R Markdowns and R objets found here can be used to reproduce the analysis performed in the article titled "Distinct changes in the composition and function of the gut microbiome accompany type 1 diabetes in pregnancy"
+The R Markdowns and R objets found here can be used to reproduce the analysis performed in the article titled "Type 1 diabetes in pregnancy is associated with distinct changes in the composition and function of the gut microbiome"
 
 ### *Details on content of each file used to perform analysis of the whole metagenomics sequencing data:*
 
-**Analysis_metagenomics_dataset_upload.Rmd:** R markdown script with all the code used to analyse the taxonomy and functional metagenomics data.
+**Metagenomics_Alpha_and_Beta_diversity_analysis.Rmd**: R markdown script with all the code used to analyse alpha and beta diversity of the taxonomy and functional metagenomics data.
 
-**Analysis_metagenomics_dataset_uploadG.html:** Knitted html document corresponding to Analysis_metagenomics_dataset_upload.Rmd with the complete analysis of the metagenomic taxonomic and functional data. 
+**Metagenomics_Alpha_and_Beta_diversity_analysis.html**: Knitted html document corresponding to Metagenomics_Alpha_and_Beta_diversity_analysis.Rmd with the complete analysis of the metagenomic alpha and beta diversity for taxonomic and functional data.
 
-*To view this file copy the complete address (https://github.com/PapenfussLab/RothSchulze_pregnancy-gut-microbiome-T1D/blob/master/Analysis_metagenomics_dataset_uploadG.html), go to https://htmlpreview.github.io/ paste and click enter.*
+**Metagenomics_DA_analysis_and_pathogenicity_markers.Rmd**: R markdown script with all the code used to analyse differential abundance of the taxonomy and functional metagenomics data and differences in pathogenicity marker concentrations between women with and without T1D. 
 
-**Mothers_Metagenomics_Strain.RData:** Contains the input for the markdown *Analysis_metagenomics_dataset_upload.Rmd* in which taxonomic analyses where performed at the strain taxonomic level.
+**Metagenomics_DA_analysis_and_pathogenicity_markers.html**: Knitted html document corresponding to Metagenomics_DA_analysis_and_pathogenicity_markers.Rmd.
 
-**Mothers_Metagenomics_Species.RData:** Contains the input for the markdown *Analysis_metagenomics_dataset_upload.Rmd* in which taxonomic analyses where performed at the species taxonomic level.
+*To view this file copy the complete address (https://github.com/PapenfussLab/RothSchulze_pregnancy-gut-microbiome-T1D/blob/master/Metagenomics_DA_analysis_and_pathogenicity_markers.html), go to https://htmlpreview.github.io/ paste and click enter.*
 
-**Mothers_Metagenomics_Genus.RData:** Contains the input for the markdown *Analysis_metagenomics_dataset_upload.Rmd* in which taxonomic analyses where performed at the genus taxonomic level.
+**Strain_level_phyloseq_object.RData**: Contains the input for the markdown Metagenomics_Alpha_and_Beta_diversity_analysis.Rmd and Metagenomics_DA_analysis_and_pathogenicity_markers.Rmd in which taxonomic analyses where performed at the strain taxonomic level.
 
-**Mothers_Metagenomics_Family.RData:** Contains the input for the markdown *Analysis_metagenomics_dataset_upload.Rmd* in which taxonomic analyses where performed at the family taxonomic level.
+**Species_level_phyloseq_object.RData**: Contains the input for the markdown Metagenomics_Alpha_and_Beta_diversity_analysis.Rmd and Metagenomics_DA_analysis_and_pathogenicity_markers.Rmd in which taxonomic analyses where performed at the species taxonomic level.
 
-**Mothers_Metagenomics_Order.RData:** Contains the input for the markdown *Analysis_metagenomics_dataset_upload.Rmd* in which taxonomic analyses where performed at the order taxonomic level.
+**Genus_level_phyloseq_object.RData**: Contains the input for the markdown Metagenomics_Alpha_and_Beta_diversity_analysis.Rmd and Metagenomics_DA_analysis_and_pathogenicity_markers.Rmd in which taxonomic analyses where performed at the genus taxonomic level.
 
-**Mothers_Metagenomics_Phylum.RData:** Contains the input for the markdown *Analysis_metagenomics_dataset_upload.Rmd* in which taxonomic analyses where performed at the phylum taxonomic level.
+**Family_level_phyloseq_object.RData**: Contains the input for the markdown Metagenomics_Alpha_and_Beta_diversity_analysis.Rmd and Metagenomics_DA_analysis_and_pathogenicity_markers.Rmd in which taxonomic analyses where performed at the family taxonomic level.
 
-**Mothers_Metagenomics_Functions_Pathways.RData:** Contains the input for the markdown *Analysis_metagenomics_dataset_upload.Rmd* in which functional analyses where performed for pathways.
+**Order_level_phyloseq_object.RData**: Contains the input for the markdown Metagenomics_Alpha_and_Beta_diversity_analysis.Rmd and Metagenomics_DA_analysis_and_pathogenicity_markers.Rmd in which taxonomic analyses where performed at the order taxonomic level.
 
-**Mothers_Metagenomics_Functions_KO.RData:** Contains the input for the markdown *Analysis_metagenomics_dataset_upload.Rmd* in which functional analyses where performed for Kegg orthology functional categories.
+**Phylum_level_phyloseq_object.RData**: Contains the input for the markdown Metagenomics_Alpha_and_Beta_diversity_analysis.Rmd and Metagenomics_DA_analysis_and_pathogenicity_markers.Rmd in which taxonomic analyses where performed at the phylum taxonomic level.
 
-**Mothers_Metagenomics_Functions_MetaCyc.RData:** Contains the input for the markdown *Analysis_metagenomics_dataset_upload.Rmd* in which functional analyses where performed for MetaCyc reactions.
+**Pathways_phyloseq_object.RData**: Contains the input for the markdown Metagenomics_Alpha_and_Beta_diversity_analysis.Rmd and Metagenomics_DA_analysis_and_pathogenicity_markers.Rmd in which functional analyses where performed for pathways.
 
+**KEGG_Orthology_phyloseq_object.RData**: Contains the input for the markdown Metagenomics_Alpha_and_Beta_diversity_analysis.Rmd and Metagenomics_DA_analysis_and_pathogenicity_markers.Rmd in which functional analyses where performed for Kegg orthology functional categories.
 
-### *Details on content of each file used to perform analysis of the 16S rRNA amplicon sequencing data:*
-
-**Phyloseq_Mother_data_formating_16S.R:** R script used to make OTUs from features (16S rRNA data) and filter data by abundance.
-
-**Analysis_16S_dataset_upload.Rmd:** R markdown script with the code used to analyse the taxonomy 16S rRNA amplicon data.
-
-**Analysis_16S_dataset_uploadG.html:** Knitted html document corresponding to Analysis_16S_dataset_upload.Rmd with the complete analysis of the 16S rRNA amplicon data.
-
-*To view this file copy the complete address (https://github.com/PapenfussLab/RothSchulze_pregnancy-gut-microbiome-T1D/blob/master/Analysis_16S_dataset_uploadG.html, go to https://htmlpreview.github.io/ paste and click enter.*
-
-**Mothers_OTU_AFilt1_Preg.RData:** Contains the input for the R script *Phyloseq_Mother_data_formating_16S.R:* in which I convert features into OTUs for the 16S data.
-
-**Mothers_OTU_Phyloseq_Obj_Filter1_16S.RData:** Contains the input for the markdown *Analysis_16S_dataset_upload.Rmd:* in which all the analyses where performed for the 16S data.
-
-
-
-
+**MetaCyc_reactions_phyloseq_object.RData**: Contains the input for the markdown Metagenomics_Alpha_and_Beta_diversity_analysis.Rmd and Metagenomics_DA_analysis_and_pathogenicity_markers.Rmd in which functional analyses where performed for MetaCyc reactions.
 
