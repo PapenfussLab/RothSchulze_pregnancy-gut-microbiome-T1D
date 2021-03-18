@@ -32,3 +32,11 @@ The R Markdowns and R objets found here can be used to reproduce the analysis pe
 
 **MetaCyc_reactions_phyloseq_object.RData**: Contains the input for the markdown Metagenomics_Alpha_and_Beta_diversity_analysis.Rmd and Metagenomics_DA_analysis_and_pathogenicity_markers.Rmd in which functional analyses where performed for MetaCyc reactions.
 
+In addition, csv files containing concentrations of Calprotectin and I-FABP as well as a file containing the results from qPCR are included to be analysed within Markdown Metagenomics_DA_analysis_and_pathogenicity_markers.Rmd:
+
+**Calprotectin_measurements.csv**
+
+**iFABP_measurements.csv**
+
+**qPCR_data.csv**
+
