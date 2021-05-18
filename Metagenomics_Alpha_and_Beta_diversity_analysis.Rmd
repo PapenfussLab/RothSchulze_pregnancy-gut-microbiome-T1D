@@ -505,7 +505,7 @@ set.seed(201)
 i=1
 ```
 
-```{r Format, echo=FALSE}
+```{r ref.label='Format', echo=FALSE}
 ```
 
 ```{r DistMatMetadata, echo=FALSE}
